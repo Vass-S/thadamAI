@@ -323,80 +323,46 @@ def render_summary_cards(snapshot: pd.DataFrame):
 
 
 def render_results_table(snapshot: pd.DataFrame):
-    """Render a styled HTML table for latest results."""
-    rows_html = ""
+
     snapshot = snapshot.copy()
+
+    # Sort abnormal first
     snapshot["_sort"] = snapshot["status"].apply(
         lambda s: 0 if ("HIGH" in str(s) or "LOW" in str(s)) else 1
     )
     snapshot = snapshot.sort_values(["_sort", "test_name"])
+    snapshot = snapshot.drop(columns=["_sort"])
 
-    for _, row in snapshot.iterrows():
-        unit   = row["unit"] if pd.notna(row.get("unit", "")) else ""
-        status = status_pill(row["status"])
-        rows_html += f"""
-        <tr>
-            <td style="color:#d4dbe8;padding:8px 12px">{row['test_name']}</td>
-            <td style="color:#fff;font-weight:600;padding:8px 12px;text-align:right">{row['value']}</td>
-            <td style="color:var(--muted);padding:8px 12px">{unit}</td>
-            <td style="padding:8px 12px">{status}</td>
-        </tr>
-        """
+    # Clean micro symbol
+    snapshot["unit"] = snapshot["unit"].astype(str).str.replace("Âµ", "µ")
 
-    table = f"""
-    <table style="width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:0.82rem">
-        <thead>
-            <tr style="border-bottom:1px solid #1e2635">
-                <th style="text-align:left;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Test</th>
-                <th style="text-align:right;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Value</th>
-                <th style="text-align:left;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Unit</th>
-                <th style="text-align:left;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Status</th>
-            </tr>
-        </thead>
-        <tbody>{rows_html}</tbody>
-    </table>
-    """
-    st.markdown(
-    f"<div style='overflow-x:auto'>{table}</div>",
-    unsafe_allow_html=True
-)
+    st.dataframe(
+        snapshot[["test_name", "value", "unit", "status"]],
+        width="stretch",
+        hide_index=True
+    )
 
 
 def render_trends_table(trends: pd.DataFrame):
-    rows_html = ""
-    for _, row in trends.iterrows():
-        unit   = row["unit"] if pd.notna(row.get("unit", "")) else ""
-        badge  = trend_badge(row["change_%"], row["trend"])
-        status = status_pill(row["latest_status"])
-        rows_html += f"""
-        <tr>
-            <td style="color:#d4dbe8;padding:8px 12px">{row['test_name']}</td>
-            <td style="padding:8px 12px">{badge}</td>
-            <td style="color:var(--muted);padding:8px 12px;text-align:right">{row['first_value']}</td>
-            <td style="color:#fff;font-weight:600;padding:8px 12px;text-align:right">{row['latest_value']}</td>
-            <td style="color:var(--muted);padding:8px 12px">{unit}</td>
-            <td style="padding:8px 12px">{status}</td>
-            <td style="color:var(--muted);padding:8px 12px;text-align:center">{int(row['n_reports'])}</td>
-        </tr>
-        """
 
-    table = f"""
-    <table style="width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:0.82rem">
-        <thead>
-            <tr style="border-bottom:1px solid #1e2635">
-                <th style="text-align:left;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Test</th>
-                <th style="text-align:left;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Change</th>
-                <th style="text-align:right;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">First</th>
-                <th style="text-align:right;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Latest</th>
-                <th style="text-align:left;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Unit</th>
-                <th style="text-align:left;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Status</th>
-                <th style="text-align:center;color:#5c6a80;padding:8px 12px;font-size:0.6rem;letter-spacing:3px;text-transform:uppercase">Reports</th>
-            </tr>
-        </thead>
-        <tbody>{rows_html}</tbody>
-    </table>
-    """
-    st.markdown(table, unsafe_allow_html=True)
+    trends = trends.copy()
+    trends["unit"] = trends["unit"].astype(str).str.replace("Âµ", "µ")
+
+    st.dataframe(
+        trends[
+            [
+                "test_name",
+                "change_%",
+                "first_value",
+                "latest_value",
+                "unit",
+                "latest_status",
+                "n_reports",
+            ]
+        ],
+        width="stretch",
+        hide_index=True
+    )
 
 
 # ─────────────────────────────────────────────
@@ -513,7 +479,7 @@ if page == "Upload Reports":
                     "↓ Export CSV",
                     data=snapshot.to_csv(index=False).encode("utf-8"),
                     file_name=f"{safe_name}_latest.csv",
-                    mime="text/csv"
+                    mime="text/csv", key=f"trends_{pid}"
                 )
 
             # ───── Trends ─────
@@ -532,7 +498,7 @@ if page == "Upload Reports":
                         "↓ Export Trends",
                         data=trends.to_csv(index=False).encode("utf-8"),
                         file_name=f"{safe_name}_trends.csv",
-                        mime="text/csv"
+                        mime="text/csv", key=f"trends_{pid}" 
                     )
 
         st.markdown("---")
@@ -611,7 +577,7 @@ elif page == "Patient Profiles":
                         "↓ Export Trends",
                         data=trends.to_csv(index=False).encode("utf-8"),
                         file_name=f"{safe_name}_trends.csv",
-                        mime="text/csv"
+                        mime="text/csv", 
                     )
 
             # ───── Full History ─────
