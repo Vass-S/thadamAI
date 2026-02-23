@@ -450,125 +450,89 @@ if page == "Upload Reports":
         "Drop PDF lab reports here",
         type="pdf",
         accept_multiple_files=True,
-        help="Upload one or more PDF lab reports. Patient identity is detected automatically.",
+        help="Upload one or more PDF lab reports.",
         label_visibility="collapsed"
     )
 
-    if uploaded_files:
-        if st.button("⟳  Process Reports"):
-            progress = st.progress(0)
-            results_by_patient = {}
+    if uploaded_files and st.button("⟳  Process Reports"):
+        progress = st.progress(0)
+        results_by_patient = {}
 
-            for i, uf in enumerate(uploaded_files):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(uf.read())
-                    tmp_path = Path(tmp.name)
+        for i, uf in enumerate(uploaded_files):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uf.read())
+                tmp_path = Path(tmp.name)
 
-                with st.spinner(f"Extracting: {uf.name}"):
-                    df = process_pdf(tmp_path, verbose=False)
+            df = process_pdf(tmp_path, verbose=False)
 
-                if df.empty:
-                    st.warning(f"⚠️ No data extracted from **{uf.name}** — check PDF format.")
+            if df.empty:
+                st.warning(f"⚠️ No data extracted from {uf.name}")
+            else:
+                save_report(df)
+                pid = df["patient_id"].iloc[0]
+                results_by_patient.setdefault(pid, []).append(df)
+                st.success(f"✓ {uf.name} — {len(df)} tests")
+
+            progress.progress((i + 1) / len(uploaded_files))
+
+        st.markdown("---")
+
+        for pid in results_by_patient:
+            history = load_history(pid)
+            trends = generate_trends(history)
+
+            if history.empty:
+                continue
+
+            render_patient_card(history)
+
+            tab1, tab2 = st.tabs(["Latest Results", "Trends"])
+
+            # ───── Latest Results ─────
+            with tab1:
+                snapshot = (
+                    history.sort_values("report_date")
+                    .groupby("test_name")
+                    .last()
+                    .reset_index()
+                )
+
+                render_summary_cards(snapshot)
+                render_results_table(snapshot)
+
+                # SAFE FILENAME
+                raw_name = history["patient_name"].iloc[0]
+                if pd.isna(raw_name):
+                    raw_name = "patient"
+                safe_name = str(raw_name).replace(" ", "_")
+
+                st.download_button(
+                    "↓ Export CSV",
+                    data=snapshot.to_csv(index=False).encode("utf-8"),
+                    file_name=f"{safe_name}_latest.csv",
+                    mime="text/csv"
+                )
+
+            # ───── Trends ─────
+            with tab2:
+                if trends.empty:
+                    st.info("Upload more reports to see trends.")
                 else:
-                    save_report(df)
-                    pid = df["patient_id"].iloc[0]
-                    if pid not in results_by_patient:
-                        results_by_patient[pid] = []
-                    results_by_patient[pid].append(df)
-                    st.success(f"✓ {uf.name} — {len(df)} tests · {df['patient_name'].iloc[0]}")
+                    render_trends_table(trends)
 
-                progress.progress((i + 1) / len(uploaded_files))
+                    raw_name = history["patient_name"].iloc[0]
+                    if pd.isna(raw_name):
+                        raw_name = "patient"
+                    safe_name = str(raw_name).replace(" ", "_")
 
-            st.markdown("---")
+                    st.download_button(
+                        "↓ Export Trends",
+                        data=trends.to_csv(index=False).encode("utf-8"),
+                        file_name=f"{safe_name}_trends.csv",
+                        mime="text/csv"
+                    )
 
-            # Show results per patient
-            for pid, dfs in results_by_patient.items():
-                history = load_history(pid)
-                trends  = generate_trends(history)
-
-                render_patient_card(history)
-
-                tab1, tab2 = st.tabs(["Latest Results", "Trends"])
-
-                with tab1:
-                    snapshot = (history.sort_values("report_date")
-                                       .groupby("test_name").last()
-                                       .reset_index())
-                    render_summary_cards(snapshot)
-                    render_results_table(snapshot)
-
-                    col1, col2 = st.columns([1, 5])
-                    with col1:
-                        st.download_button(
-                            "↓ Export CSV",
-                            data=df_to_csv_bytes(snapshot),
-                            name = str(history["patient_name"].iloc[0]) if not history.empty else "patient"
-safe_name = name.replace(" ", "_")
-
-st.download_button(
-    "↓ Export CSV",
-    data=df_to_csv_bytes(snapshot),
-    file_name=f"{safe_name}.csv",
-    mime="text/csv"
-)
-                        )
-
-                with tab2:
-                    if trends.empty:
-                        st.info("Upload more reports for the same patient to see longitudinal trends.")
-                    else:
-                        render_trends_table(trends)
-
-                        # Callouts
-                        abnormal_trends = trends[trends["latest_status"].str.contains("HIGH|LOW", na=False)]
-                        worsening = abnormal_trends[
-                            (abnormal_trends["latest_status"].str.contains("HIGH") & (abnormal_trends["change_%"] > 0)) |
-                            (abnormal_trends["latest_status"].str.contains("LOW")  & (abnormal_trends["change_%"] < 0))
-                        ]
-                        improving = abnormal_trends[
-                            (abnormal_trends["latest_status"].str.contains("HIGH") & (abnormal_trends["change_%"] < 0)) |
-                            (abnormal_trends["latest_status"].str.contains("LOW")  & (abnormal_trends["change_%"] > 0))
-                        ]
-
-                        if not worsening.empty:
-                            with st.expander(f"⚠️ {len(worsening)} Worsening Abnormal(s)", expanded=True):
-                                for _, row in worsening.iterrows():
-                                    st.markdown(
-                                        f"**{row['test_name']}** — {row['trend']} {abs(row['change_%'])}% · still {row['latest_status']}"
-                                    )
-
-                        if not improving.empty:
-                            with st.expander(f"✅ {len(improving)} Improving (still abnormal)"):
-                                for _, row in improving.iterrows():
-                                    st.markdown(
-                                        f"**{row['test_name']}** — {row['trend']} {abs(row['change_%'])}% · moving toward normal"
-                                    )
-
-                        col1, col2 = st.columns([1, 5])
-                        with col1:
-                            st.download_button(
-                                "↓ Export Trends",
-                                data=df_to_csv_bytes(trends),
-                                file_name=f"{history['patient_name'].iloc[0].replace(' ','_')}_trends.csv",
-                                mime="text/csv"
-                            )
-                st.markdown("---")
-
-    else:
-        # Empty state
-        st.markdown("""
-        <div style="text-align:center;padding:4rem 2rem;color:#5c6a80">
-            <div style="font-size:3rem;margin-bottom:1rem">📄</div>
-            <div style="font-family:'Syne',sans-serif;font-size:1.1rem;color:#d4dbe8;margin-bottom:0.5rem">
-                Upload lab reports to get started
-            </div>
-            <div style="font-size:0.8rem">
-                Supports PDF reports from Hitech, Metropolis, and similar labs.<br>
-                Patient identity is detected automatically from the PDF.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.markdown("---")
 
 # ─────────────────────────────────────────────
 # PAGE: PATIENT PROFILES
@@ -580,7 +544,7 @@ elif page == "Patient Profiles":
     patients = list_patients()
 
     if not patients:
-        st.info("No patient profiles found. Upload some lab reports first.")
+        st.info("No patient profiles found.")
     else:
         patient_options = {
             f"{p['patient_name']} ({p['n_reports']} report(s))": p["patient_id"]
@@ -595,7 +559,7 @@ elif page == "Patient Profiles":
         selected_pid = patient_options[selected_label]
 
         history = load_history(selected_pid)
-        trends  = generate_trends(history)
+        trends = generate_trends(history)
 
         if history.empty:
             st.error("Could not load profile.")
@@ -604,90 +568,61 @@ elif page == "Patient Profiles":
 
             tab1, tab2, tab3 = st.tabs(["Latest Results", "Trends", "Full History"])
 
+            # ───── Latest ─────
             with tab1:
-                snapshot = (history.sort_values("report_date")
-                                   .groupby("test_name").last()
-                                   .reset_index())
+                snapshot = (
+                    history.sort_values("report_date")
+                    .groupby("test_name")
+                    .last()
+                    .reset_index()
+                )
+
                 render_summary_cards(snapshot)
                 render_results_table(snapshot)
 
-                col1, _ = st.columns([1, 5])
-                with col1:
-                    st.download_button(
-                        "↓ Export CSV",
-                        data=df_to_csv_bytes(snapshot),
-                        file_name=f"{history['patient_name'].iloc[0].replace(' ','_')}_latest.csv",
-                        mime="text/csv"
-                    )
+                raw_name = history["patient_name"].iloc[0]
+                if pd.isna(raw_name):
+                    raw_name = "patient"
+                safe_name = str(raw_name).replace(" ", "_")
 
+                st.download_button(
+                    "↓ Export CSV",
+                    data=snapshot.to_csv(index=False).encode("utf-8"),
+                    file_name=f"{safe_name}_latest.csv",
+                    mime="text/csv"
+                )
+
+            # ───── Trends ─────
             with tab2:
                 if trends.empty:
-                    st.info("Need at least 2 reports to show trends.")
+                    st.info("Need at least 2 reports for trends.")
                 else:
                     render_trends_table(trends)
-                    col1, _ = st.columns([1, 5])
-                    with col1:
-                        st.download_button(
-                            "↓ Export Trends",
-                            data=df_to_csv_bytes(trends),
-                            file_name=f"{history['patient_name'].iloc[0].replace(' ','_')}_trends.csv",
-                            mime="text/csv"
-                        )
 
-            with tab3:
-                st.markdown('<div class="section-label">All Test Records</div>', unsafe_allow_html=True)
-                display_cols = ["report_date", "test_name", "value", "unit", "status", "source_file"]
-                available = [c for c in display_cols if c in history.columns]
-                st.dataframe(
-                    history[available].sort_values(["report_date", "test_name"], ascending=[False, True]),
-                    use_container_width=True,
-                    hide_index=True
-                )
-                col1, _ = st.columns([1, 5])
-                with col1:
+                    raw_name = history["patient_name"].iloc[0]
+                    if pd.isna(raw_name):
+                        raw_name = "patient"
+                    safe_name = str(raw_name).replace(" ", "_")
+
                     st.download_button(
-                        "↓ Full History",
-                        data=df_to_csv_bytes(history),
-                        file_name=f"{history['patient_name'].iloc[0].replace(' ','_')}_full_history.csv",
+                        "↓ Export Trends",
+                        data=trends.to_csv(index=False).encode("utf-8"),
+                        file_name=f"{safe_name}_trends.csv",
                         mime="text/csv"
                     )
 
+            # ───── Full History ─────
+            with tab3:
+                st.dataframe(history, use_container_width=True)
 
-# ─────────────────────────────────────────────
-# PAGE: ABOUT
-# ─────────────────────────────────────────────
+                raw_name = history["patient_name"].iloc[0]
+                if pd.isna(raw_name):
+                    raw_name = "patient"
+                safe_name = str(raw_name).replace(" ", "_")
 
-elif page == "About":
-    st.markdown("""
-    <div style="max-width:640px">
-        <div class="section-label">About this platform</div>
-        <p style="color:#d4dbe8;line-height:1.8;font-size:0.88rem">
-            The <strong style="color:#fff">Longitudinal Biomarker Intelligence Platform</strong> extracts
-            structured data from PDF lab reports, flags out-of-range results, and tracks trends
-            across multiple reports over time.
-        </p>
-
-        <div class="section-label" style="margin-top:2rem">How It Works</div>
-        <p style="color:#d4dbe8;line-height:1.8;font-size:0.88rem">
-            1. Upload one or more PDF lab reports.<br>
-            2. The system automatically extracts patient metadata (name, age, gender, date).<br>
-            3. Biomarkers are matched against a reference dictionary with 200+ canonical names and aliases.<br>
-            4. Values are compared against normal ranges (sex-specific where applicable).<br>
-            5. Across multiple reports, longitudinal trends are computed and surfaced.
-        </p>
-
-        <div class="section-label" style="margin-top:2rem">Supported Labs</div>
-        <p style="color:#d4dbe8;line-height:1.8;font-size:0.88rem">
-            Hitech Diagnostic Centre, Metropolis Healthcare, and other labs following
-            similar PDF report formats. The alias dictionary can be extended for additional labs.
-        </p>
-
-        <div class="section-label" style="margin-top:2rem">Privacy Notice</div>
-        <p style="color:#d4dbe8;line-height:1.8;font-size:0.88rem">
-            Reports are processed locally. Patient profiles are stored as CSV files in
-            <code style="color:var(--accent)">data/patient_profiles/</code>.
-            Do not commit this directory to a public repository if reports contain
-            identifiable health data.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+                st.download_button(
+                    "↓ Full History",
+                    data=history.to_csv(index=False).encode("utf-8"),
+                    file_name=f"{safe_name}_full_history.csv",
+                    mime="text/csv"
+                )
