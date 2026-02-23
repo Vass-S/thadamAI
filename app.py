@@ -502,8 +502,15 @@ if page == "Upload Reports":
                         st.download_button(
                             "↓ Export CSV",
                             data=df_to_csv_bytes(snapshot),
-                            file_name=f"{history['patient_name'].iloc[0].replace(' ','_')}_latest.csv",
-                            mime="text/csv"
+                            name = str(history["patient_name"].iloc[0]) if not history.empty else "patient"
+safe_name = name.replace(" ", "_")
+
+st.download_button(
+    "↓ Export CSV",
+    data=df_to_csv_bytes(snapshot),
+    file_name=f"{safe_name}.csv",
+    mime="text/csv"
+)
                         )
 
                 with tab2:
