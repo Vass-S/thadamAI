@@ -165,7 +165,7 @@ def render_results_table(snapshot: pd.DataFrame):
     df["_sort"] = df["status"].apply(lambda s: 0 if ("HIGH" in str(s) or "LOW" in str(s)) else 1)
     df = df.sort_values(["_sort", "test_name"]).drop(columns=["_sort"])
     df["unit"] = df["unit"].astype(str).str.replace("Âµ", "µ", regex=False)
-    st.dataframe(df[["test_name", "value", "unit", "status"]], use_container_width=True, hide_index=True)
+    st.dataframe(df[["test_name", "value", "unit", "status"]], width='stretch', hide_index=True)
 
 
 def render_trends_table(trends: pd.DataFrame):
@@ -185,7 +185,7 @@ def render_trends_table(trends: pd.DataFrame):
     })
     cols = ["test_name", "From", "Value (From)", "To", "Value (To)", "unit", "Δ %", "Dir", "Status", "Reports"]
     available = [c for c in cols if c in df.columns]
-    st.dataframe(df[available], use_container_width=True, hide_index=True)
+    st.dataframe(df[available], width='stretch', hide_index=True)
 
 
 def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame):
@@ -511,7 +511,7 @@ elif page == "Patient Profiles":
                 avail     = [c for c in show_cols if c in history.columns]
                 st.dataframe(
                     history[avail].sort_values(["report_date", "test_name"], ascending=[False, True]),
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True
                 )
                 st.download_button(
