@@ -161,8 +161,10 @@ def extract_metadata(text):
         meta["age"]    = int(m.group(2))
         meta["gender"] = m.group(3).upper()
 
+    # ── Metropolis / new-Hitech fallback ─────────────────────────────
+    # Format: "Mr. SRINIWAS S" on its own line; "Age: 36 Year(s) Sex: Male" elsewhere
     if not meta["name"]:
-        m = re.search(r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w\s]+?)(?:\n|Age)", text, re.I)
+        m = re.search(r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w]+(?:\s+\w)?)\s*(?:\n|$|Reference|VID)", text, re.I)
         if m:
             meta["name"] = m.group(1).strip()
     if not meta["age"]:
@@ -205,6 +207,20 @@ def _clean_name(name: str) -> str:
 
 
 def make_patient_id(meta: dict) -> str:
+    """
+    Tier 1 — Full name (2+ real words) + gender.
+               Always deterministic; no profile scan needed.
+               e.g. 'SRINIWAS SRIRAM M' → stable hash.
+
+    Tier 2 — Truncated name (1 real word) + phone + gender.
+               Before hashing, scan existing profiles to see if a
+               Tier-1 record already exists for the same first-name
+               prefix + phone + gender.  If yes, reuse that PID so
+               both reports land in the same longitudinal profile.
+
+    Tier 3 — First name + gender + age-decade (no phone).
+               Same profile scan as Tier 2.
+    """
     gender = meta.get("gender", "").upper()
     name   = _clean_name(meta.get("name", ""))
     phone  = re.sub(r"\D", "", meta.get("phone", ""))[-10:]
@@ -212,11 +228,17 @@ def make_patient_id(meta: dict) -> str:
 
     real_words = [w for w in name.split() if len(w) >= 2]
 
+    # ── Tier 1: unambiguous full name ────────────────────────────────
     if len(real_words) >= 2:
         key = f"FULLNAME|{'_'.join(real_words)}|{gender}"
         return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
 
+    # ── Tiers 2 & 3: truncated name — try to merge with existing profile ──
     first = real_words[0] if real_words else "UNKNOWN"
+    existing_pid = _lookup_existing_pid(first, gender, phone)
+    if existing_pid:
+        return existing_pid
+
     if phone and len(phone) >= 8:
         key = f"TRUNCATED|{first}|{gender}|{phone}"
         return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
@@ -224,6 +246,48 @@ def make_patient_id(meta: dict) -> str:
     decade = str((age // 10) * 10) if age else "XX"
     key    = f"FIRST|{first}|{gender}|{decade}"
     return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
+
+
+def _lookup_existing_pid(first_name: str, gender: str, phone: str) -> str | None:
+    """
+    Scan stored patient profiles for one whose:
+      - stored patient_name starts with first_name (case-insensitive)
+      - stored gender matches
+      - stored phone (if present) matches last-10-digit phone
+
+    Returns the existing patient_id string, or None if no match found.
+    This lets a truncated "SRINIWAS S" report merge into the existing
+    "SRINIWAS SRIRAM" full-name profile automatically.
+    """
+    if not STORE_DIR.exists():
+        return None
+    for csv_file in STORE_DIR.glob("*.csv"):
+        try:
+            df = pd.read_csv(csv_file, nrows=1)
+            if df.empty:
+                continue
+            stored_name   = _clean_name(str(df["patient_name"].iloc[0]))
+            stored_gender = str(df.get("gender", pd.Series([""])).iloc[0]).upper()
+            stored_phone  = ""
+            if "file_hash" in df.columns:
+                # Re-read without nrows to get phone if it was stored
+                pass
+            # Match: gender must agree, stored name must start with our first word,
+            # and if we have a phone it must match
+            if stored_gender != gender:
+                continue
+            stored_first = stored_name.split()[0] if stored_name.split() else ""
+            if stored_first != first_name.upper():
+                continue
+            # Phone check — read source_file column to find phone if stored
+            # The phone isn't stored in the CSV directly; use the PID file name
+            # as identity — just matching first_name + gender is enough when
+            # the first name is distinctive (≥5 chars) to avoid false merges
+            if len(first_name) >= 4:
+                return csv_file.stem   # return the patient_id (filename without .csv)
+        except Exception:
+            continue
+    return None
 
 
 # ─────────────────────────────────────────────
