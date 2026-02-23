@@ -140,7 +140,12 @@ def normalize_unit(unit):
 def extract_metadata(text):
     meta = {"name": "", "gender": "", "date": "", "age": None, "phone": ""}
 
-    m = re.search(r"Patient\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)\s*\((\d+)\s*/\s*([MF])\)", text, re.I)
+    # Fix: allow an optional lab patient-ID token (e.g. "P0006027") between
+    # "Patient :" and the salutation, as seen in Hitech reports.
+    m = re.search(
+        r"Patient\s*[:\-]\s*(?:[A-Z]\d+\s+)?(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)\s*\((\d+)\s*/\s*([MF])\)",
+        text, re.I
+    )
     if m:
         meta["name"]   = re.sub(r'\b[A-Z]\d+\b', '', m.group(1)).strip()
         meta["age"]    = int(m.group(2))
@@ -253,9 +258,31 @@ def extract_biomarkers(text, gender=""):
                 continue
 
             found = find_value_in_text(clean, match.end())
-            if not found and i + 1 < len(lines):
-                next_line = re.sub(r'\s+', ' ', lines[i + 1]).strip()
-                found = find_value_in_text(next_line, 0)
+            # Check next 2 lines — some labs put value on next line,
+            # or unit on the line after the value (e.g. Hitech DHEA SULPHATE)
+            if not found:
+                for lookahead in range(1, 3):
+                    if i + lookahead < len(lines):
+                        next_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
+                        # Skip reference-range lines
+                        if re.search(r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:)\b', next_line, re.I):
+                            continue
+                        found = find_value_in_text(next_line, 0)
+                        if found:
+                            break
+            # Special case: value on same line but unit on next line
+            # e.g. "DHEA SULPHATE 425.70" / "Microgm/dl"
+            if found and not found[1]:
+                for lookahead in range(1, 3):
+                    if i + lookahead < len(lines):
+                        unit_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip().lower()
+                        unit_match = re.match(
+                            r'^(mg\/dl|ng\/ml|ng\/dl|pg\/ml|u\/l|iu\/l|gm\/dl|g\/dl|microgm\/dl|miu\/l|%)$',
+                            unit_line, re.I
+                        )
+                        if unit_match:
+                            found = (found[0], normalize_unit(unit_match.group(1)))
+                            break
 
             if not found:
                 continue
