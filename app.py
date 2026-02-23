@@ -356,7 +356,10 @@ def render_results_table(snapshot: pd.DataFrame):
         <tbody>{rows_html}</tbody>
     </table>
     """
-    st.markdown(table, unsafe_allow_html=True)
+    st.markdown(
+    f"<div style='overflow-x:auto'>{table}</div>",
+    unsafe_allow_html=True
+)
 
 
 def render_trends_table(trends: pd.DataFrame):
