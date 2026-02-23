@@ -56,6 +56,10 @@ _UNIT_MAP = {
 _DATE_FMTS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"]
 
 
+# ─────────────────────────────────────────────
+# DICTIONARY
+# ─────────────────────────────────────────────
+
 def load_dictionary(path):
     df = pd.read_csv(path, encoding="latin1")
     biomarkers = {}
@@ -87,9 +91,12 @@ def load_dictionary(path):
     return biomarkers, alias_map, all_aliases
 
 
-# Module-level globals — loaded once
 BIOMARKERS, _ALIAS_MAP, _ALL_ALIASES = load_dictionary(DICT_PATH)
 
+
+# ─────────────────────────────────────────────
+# STATUS FLAGGING
+# ─────────────────────────────────────────────
 
 def _parse_range(s):
     s = str(s).strip()
@@ -137,11 +144,14 @@ def normalize_unit(unit):
     return _UNIT_MAP.get(str(unit).strip().lower(), str(unit).strip())
 
 
+# ─────────────────────────────────────────────
+# METADATA
+# ─────────────────────────────────────────────
+
 def extract_metadata(text):
     meta = {"name": "", "gender": "", "date": "", "age": None, "phone": ""}
 
-    # Fix: allow an optional lab patient-ID token (e.g. "P0006027") between
-    # "Patient :" and the salutation, as seen in Hitech reports.
+    # Allow optional lab patient-ID token (e.g. "P0006027") between "Patient :" and Mr./Mrs.
     m = re.search(
         r"Patient\s*[:\-]\s*(?:[A-Z]\d+\s+)?(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)\s*\((\d+)\s*/\s*([MF])\)",
         text, re.I
@@ -216,6 +226,36 @@ def make_patient_id(meta: dict) -> str:
     return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
 
 
+# ─────────────────────────────────────────────
+# DUPLICATE DETECTION
+# ─────────────────────────────────────────────
+
+def file_hash(path: Path) -> str:
+    """SHA-256 of file bytes — used to detect re-uploads of the same PDF."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def is_duplicate_file(path: Path) -> bool:
+    """Return True if this exact file has already been stored in any patient profile."""
+    fh = file_hash(path)
+    for csv_file in STORE_DIR.glob("*.csv"):
+        try:
+            df = pd.read_csv(csv_file)
+            if "file_hash" in df.columns and fh in df["file_hash"].values:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+# ─────────────────────────────────────────────
+# EXTRACTION
+# ─────────────────────────────────────────────
+
 def find_value_in_text(text, pos):
     snippet = text[pos: pos + 80]
     m = re.search(
@@ -258,24 +298,23 @@ def extract_biomarkers(text, gender=""):
                 continue
 
             found = find_value_in_text(clean, match.end())
-            # Check next 2 lines — some labs put value on next line,
-            # or unit on the line after the value (e.g. Hitech DHEA SULPHATE)
+
+            # Look up to 2 lines ahead for value or split unit
             if not found:
                 for lookahead in range(1, 3):
                     if i + lookahead < len(lines):
                         next_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
-                        # Skip reference-range lines
                         if re.search(r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:)\b', next_line, re.I):
                             continue
                         found = find_value_in_text(next_line, 0)
                         if found:
                             break
-            # Special case: value on same line but unit on next line
-            # e.g. "DHEA SULPHATE 425.70" / "Microgm/dl"
+
+            # Unit on a standalone line below the value (e.g. Hitech DHEA SULPHATE)
             if found and not found[1]:
                 for lookahead in range(1, 3):
                     if i + lookahead < len(lines):
-                        unit_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip().lower()
+                        unit_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
                         unit_match = re.match(
                             r'^(mg\/dl|ng\/ml|ng\/dl|pg\/ml|u\/l|iu\/l|gm\/dl|g\/dl|microgm\/dl|miu\/l|%)$',
                             unit_line, re.I
@@ -303,6 +342,10 @@ def extract_biomarkers(text, gender=""):
     return results
 
 
+# ─────────────────────────────────────────────
+# PROCESSING & STORAGE
+# ─────────────────────────────────────────────
+
 def process_pdf(pdf_path, verbose=True):
     pdf_path = Path(pdf_path)
     with pdfplumber.open(pdf_path) as pdf:
@@ -328,6 +371,7 @@ def process_pdf(pdf_path, verbose=True):
     df["age"]          = meta.get("age", "")
     df["report_date"]  = meta["date"]
     df["source_file"]  = pdf_path.name
+    df["file_hash"]    = file_hash(pdf_path)
     return df
 
 
@@ -336,7 +380,7 @@ def save_report(df):
         return
     path = STORE_DIR / f"{df['patient_id'].iloc[0]}.csv"
     if path.exists():
-        existing     = pd.read_csv(path)
+        existing      = pd.read_csv(path)
         existing_name = str(existing["patient_name"].iloc[0]) if not existing.empty else ""
         new_name      = str(df["patient_name"].iloc[0])
         if len(new_name) > len(existing_name):
@@ -354,6 +398,40 @@ def load_history(patient_id):
     df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
     return df
 
+
+# ─────────────────────────────────────────────
+# DELETE
+# ─────────────────────────────────────────────
+
+def delete_patient(patient_id: str) -> bool:
+    """Delete all stored data for a patient. Returns True on success."""
+    path = STORE_DIR / f"{patient_id}.csv"
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
+def delete_report_by_date(patient_id: str, report_date: str) -> bool:
+    """Remove all rows for a specific report_date from a patient's profile."""
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return False
+    df = pd.read_csv(path)
+    before = len(df)
+    df = df[df["report_date"].astype(str).str[:10] != str(report_date)[:10]]
+    if len(df) == before:
+        return False
+    if df.empty:
+        path.unlink()
+    else:
+        df.to_csv(path, index=False)
+    return True
+
+
+# ─────────────────────────────────────────────
+# TRENDS & TIMESERIES
+# ─────────────────────────────────────────────
 
 def generate_trends(history):
     rows = []
@@ -385,8 +463,22 @@ def generate_trends(history):
     return pd.DataFrame(rows).sort_values("change_%", key=abs, ascending=False)
 
 
+def get_test_timeseries(history: pd.DataFrame, test_name: str) -> pd.DataFrame:
+    """Return date-sorted (report_date, value, status, unit) rows for one test."""
+    df = (history[history["test_name"] == test_name]
+          .dropna(subset=["report_date"])
+          .sort_values("report_date")
+          .drop_duplicates("report_date")[["report_date", "value", "status", "unit"]]
+          .copy())
+    df["report_date"] = pd.to_datetime(df["report_date"])
+    return df
+
+
+# ─────────────────────────────────────────────
+# PATIENT LIST
+# ─────────────────────────────────────────────
+
 def list_patients():
-    """Return a list of (patient_id, patient_name, n_reports) for all stored profiles."""
     records = []
     for csv_file in STORE_DIR.glob("*.csv"):
         try:
