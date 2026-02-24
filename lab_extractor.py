@@ -17,27 +17,59 @@ DICT_PATH   = DATA_DIR / "Biomarker_dictionary_csv.csv"
 STORE_DIR.mkdir(parents=True, exist_ok=True)
 
 EXTRA_ALIASES = {
-    "Vitamin B12":          ["vitamin b 12"],
-    "Vitamin D (25-OH)":    ["25 hydroxy (oh) vit d", "25-oh vitamin d"],
-    "Urea (Serum)":         ["urea - serum"],
-    "Creatinine (Serum)":   ["creatinine - serum"],
-    "Glucose (Fasting)":    ["glucose (fasting)", "glucose fasting (plasma-f,hexokinase)"],
+    # Vitamins & minerals
+    "Vitamin B12":          ["vitamin b 12", "vitamin b12"],
+    "Vitamin D (25-OH)":    ["vitamin d (25-oh)", "25 hydroxy (oh) vit d", "25-oh vitamin d",
+                             "vitamin d", "25 oh vitamin d"],
+    "Folic Acid":           ["folic acid", "folate", "folic acid (serum)"],
+    "Copper":               ["copper"],
+
+    # Metabolic / renal
+    "Urea (Serum)":         ["urea - serum", "urea"],
+    "Creatinine (Serum)":   ["creatinine - serum", "creatinine"],
+    "Glucose (Fasting)":    ["glucose (fasting)", "glucose fasting (plasma-f,hexokinase)",
+                             "glucose fasting"],
     "HbA1c":                ["hb a1c", "hba1c- glycated haemoglobin",
-                             "hba1c- glycated haemoglobin (hplc)", "glycated haemoglobin"],
+                             "hba1c- glycated haemoglobin (hplc)", "glycated haemoglobin",
+                             "hba1c- glycated haemoglobin, blood by hplc method"],
+
+    # Hormones - androgens
     "Testosterone (Total)": ["testosterone (total)", "testosterone"],
     "DHEA Sulphate":        ["dhea sulphate"],
-    "Cortisol (AM)":        ["cortisol ( am)", "cortisol (am)"],
-    "IGF-I":                ["igf - i", "igf i"],
+
+    # Hormones - thyroid
+    "TSH":                  ["tsh 3rd generation (hs tsh)", "tsh (hs tsh)", "hs tsh",
+                             "tsh 3rd generation", "tsh- 3rd generation (hs tsh)"],
+    "Free T3":              ["free t3", "free t 3", "ft3", "free  t3"],
+    "Free T4":              ["free t4", "free t 4", "ft4", "free  t4"],
+
+    # Hormones - pituitary / reproductive
+    "LH":                   ["lh", "luteinizing hormone"],
+    "FSH":                  ["fsh", "follicle stimulating hormone"],
+    "Prolactin":            ["prolactin"],
+    "Estradiol":            ["estradiol", "oestradiol", "e2"],
+    "Progesterone":         ["progesterone"],
+
+    # Hormones - adrenal / growth
+    "Cortisol (AM)":        ["cortisol ( am)", "cortisol (am)", "cortisol"],
+    "IGF-I":                ["igf - i", "igf i", "igf-1", "igf1"],
+
+    # Liver
     "AST (SGOT)":           ["s.g.o.t. (ast)", "sgot (ast)", "sgot"],
     "ALT (SGPT)":           ["s.g.p.t. (alt)", "sgpt (alt)", "sgpt"],
-    "Gamma GT":             ["gamma gt ( ggtp)", "gamma gt (ggtp)"],
-    "Bilirubin (Total)":    ["bilirubin - total"],
-    "Bilirubin (Direct)":   ["bilirubin - direct"],
-    "Bilirubin (Indirect)": ["bilirubin - indirect"],
-    "Total Protein":        ["total proteins"],
+    "Gamma GT":             ["gamma gt ( ggtp)", "gamma gt (ggtp)", "ggt"],
+    "Bilirubin (Total)":    ["bilirubin - total", "bilirubin total"],
+    "Bilirubin (Direct)":   ["bilirubin - direct", "bilirubin direct"],
+    "Bilirubin (Indirect)": ["bilirubin - indirect", "bilirubin indirect"],
+    "Total Protein":        ["total proteins", "total protein"],
+
+    # Lipids
     "APO Lipoprotein A1":   ["apo lipoprotein a1"],
-    "APO Lipoprotein B":    ["apo lipoprotein b"],
-    "Lipoprotein(a)":       ["lipoprotein a ( lp a)"],
+    "APO Lipoprotein B":    ["apo lipoprotein b", "apolipoproteins b"],
+    "Lipoprotein(a)":       ["lipoprotein a ( lp a)", "lipoprotein(a)"],
+
+    # Serology
+    "Anti-Sperm Antibody":  ["anti sperm antibody", "anti-sperm antibody"],
 }
 
 UNIT_CONVERSIONS = {
@@ -48,10 +80,31 @@ UNIT_CONVERSIONS = {
 }
 
 _UNIT_MAP = {
-    "mg/dl": "mg/dL", "pg/ml": "pg/mL", "ng/ml": "ng/mL", "ng/dl": "ng/dL",
-    "u/l": "U/L", "iu/l": "IU/L", "gm/dl": "g/dL", "g/dl": "g/dL",
-    "microgm/dl": "µg/dL", "ug/dl": "µg/dL", "miu/l": "mIU/L", "%": "%",
+    # volume-based
+    "mg/dl": "mg/dL", "mg/l": "mg/L",
+    "pg/ml": "pg/mL", "pg/dl": "pg/dL",
+    "ng/ml": "ng/mL", "ng/dl": "ng/dL",
+    "ug/dl": "µg/dL", "ug/ml": "µg/mL",
+    "microgm/dl": "µg/dL", "microgm/ml": "µg/mL",
+    # enzyme / activity
+    "u/l": "U/L", "iu/l": "IU/L",
+    "miu/l": "mIU/L", "miu/ml": "mIU/mL",
+    "uiu/ml": "µIU/mL", "uiu/l": "µIU/L",
+    # weight
+    "gm/dl": "g/dL", "g/dl": "g/dL",
+    # serology
+    "mu/100ul": "mU/100uL", "mu/ml": "mU/mL",
+    # misc
+    "%": "%",
 }
+
+# Regex fragment that matches any known unit (used in find_value_in_text)
+_UNIT_RE = (
+    r'(mg\/dl|pg\/ml|pg\/dl|ng\/ml|ng\/dl'
+    r'|ug\/dl|microgm\/dl|microgm\/ml'
+    r'|u\/l|iu\/l|miu\/l|miu\/ml|uiu\/ml|\xb5iu\/ml|\xb5iu\/l'
+    r'|gm\/dl|g\/dl|mu\/100ul|mu\/ml|%)'
+)
 
 _DATE_FMTS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"]
 
@@ -321,16 +374,23 @@ def is_duplicate_file(path: Path) -> bool:
 # ─────────────────────────────────────────────
 
 def find_value_in_text(text, pos):
-    snippet = text[pos: pos + 80]
+    snippet = text[pos: pos + 100]
+    # Strip cid artifacts that pdfplumber emits for special chars
+    snippet = re.sub(r'\(cid:\d+\)', '', snippet)
     m = re.search(
-        r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)'
-        r'\s*(mg\/dl|ng\/ml|ng\/dl|pg\/ml|u\/l|iu\/l|gm\/dl|g\/dl|microgm\/dl|miu\/l|%)?',
+        r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)' + r'\s*' + _UNIT_RE,
         snippet, re.IGNORECASE
     )
     if not m:
-        return None
-    raw_val  = m.group(1).replace(" ", "").lstrip("<>")
-    raw_unit = m.group(2) or ""
+        # Try without unit — value only
+        m = re.search(r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)', snippet, re.IGNORECASE)
+        if not m:
+            return None
+        raw_val  = m.group(1).replace(" ", "").lstrip("<>")
+        raw_unit = ""
+    else:
+        raw_val  = m.group(1).replace(" ", "").lstrip("<>")
+        raw_unit = m.group(2) or ""
     try:
         value = float(raw_val)
     except ValueError:
@@ -379,10 +439,7 @@ def extract_biomarkers(text, gender=""):
                 for lookahead in range(1, 3):
                     if i + lookahead < len(lines):
                         unit_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
-                        unit_match = re.match(
-                            r'^(mg\/dl|ng\/ml|ng\/dl|pg\/ml|u\/l|iu\/l|gm\/dl|g\/dl|microgm\/dl|miu\/l|%)$',
-                            unit_line, re.I
-                        )
+                        unit_match = re.match(r'^' + _UNIT_RE + r'$', unit_line, re.I)
                         if unit_match:
                             found = (found[0], normalize_unit(unit_match.group(1)))
                             break
@@ -410,7 +467,18 @@ def extract_biomarkers(text, gender=""):
 # PROCESSING & STORAGE
 # ─────────────────────────────────────────────
 
-def process_pdf(pdf_path, verbose=True):
+def compute_current_age(age_at_test: int, report_date: str) -> int:
+    """
+    Derive approximate birth year from age-at-test + report date,
+    then return how old the patient is today (Feb 2026).
+    """
+    try:
+        report_year = int(str(report_date)[:4])
+        birth_year  = report_year - age_at_test
+        current_year = datetime.now().year
+        return current_year - birth_year
+    except Exception:
+        return age_at_test
     pdf_path = Path(pdf_path)
     with pdfplumber.open(pdf_path) as pdf:
         text = ""
@@ -429,13 +497,18 @@ def process_pdf(pdf_path, verbose=True):
         return pd.DataFrame()
 
     df = pd.DataFrame(results)
-    df["patient_id"]   = pid
-    df["patient_name"] = meta["name"]
-    df["gender"]       = meta.get("gender", "")
-    df["age"]          = meta.get("age", "")
-    df["report_date"]  = meta["date"]
-    df["source_file"]  = pdf_path.name
-    df["file_hash"]    = file_hash(pdf_path)
+    df["patient_id"]    = pid
+    df["patient_name"]  = meta["name"]
+    df["gender"]        = meta.get("gender", "")
+    df["age_at_test"]   = meta.get("age", "")
+    df["report_date"]   = meta["date"]
+    df["source_file"]   = pdf_path.name
+    df["file_hash"]     = file_hash(pdf_path)
+    # Compute birth year so current age stays accurate across future uploads
+    if meta.get("age") and meta.get("date"):
+        df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
+    else:
+        df["birth_year"] = None
     return df
 
 
@@ -460,6 +533,16 @@ def load_history(patient_id):
         return pd.DataFrame()
     df = pd.read_csv(path)
     df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+    # Compute current age from the earliest known birth_year
+    if "birth_year" in df.columns:
+        birth_years = pd.to_numeric(df["birth_year"], errors="coerce").dropna()
+        if not birth_years.empty:
+            birth_year = int(birth_years.min())  # most accurate = earliest report's estimate
+            df["current_age"] = datetime.now().year - birth_year
+        else:
+            df["current_age"] = df.get("age_at_test", None)
+    else:
+        df["current_age"] = df.get("age_at_test", None)
     return df
 
 
