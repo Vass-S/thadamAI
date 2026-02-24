@@ -470,7 +470,7 @@ def extract_biomarkers(text, gender=""):
 def compute_current_age(age_at_test: int, report_date: str) -> int:
     """
     Derive approximate birth year from age-at-test + report date,
-    then return how old the patient is today (Feb 2026).
+    then return how old the patient is today.
     """
     try:
         report_year = int(str(report_date)[:4])
@@ -479,6 +479,9 @@ def compute_current_age(age_at_test: int, report_date: str) -> int:
         return current_year - birth_year
     except Exception:
         return age_at_test
+
+
+def process_pdf(pdf_path, verbose=True):
     pdf_path = Path(pdf_path)
     with pdfplumber.open(pdf_path) as pdf:
         text = ""
