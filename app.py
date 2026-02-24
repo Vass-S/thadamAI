@@ -12,7 +12,8 @@ import streamlit as st
 from lab_extractor import (
     process_pdf, save_report, load_history, generate_trends,
     get_test_timeseries, list_patients, is_duplicate_file,
-    delete_patient, delete_report_by_date, STORE_DIR
+    delete_patient, delete_report_by_date, rename_patient,
+    merge_into_patient, STORE_DIR
 )
 
 # ─────────────────────────────────────────────
@@ -461,15 +462,59 @@ elif page == "Patient Profiles":
                 reverse=True
             )
 
-            with st.expander("🗑️  Manage / Delete Data", expanded=False):
-                st.markdown('<div class="section-label">Delete a specific report</div>', unsafe_allow_html=True)
+            with st.expander("✏️  Manage Patient Data", expanded=False):
 
+                # Name correction
+                st.markdown('<div class="section-label">Correct patient name</div>', unsafe_allow_html=True)
+                current_name = history["patient_name"].iloc[0]
+                new_name = st.text_input(
+                    "Patient name (edit to correct typos / OCR errors)",
+                    value=current_name,
+                    key="rename_input"
+                )
+                other_patients = [(p["patient_id"], p["patient_name"])
+                                  for p in list_patients()
+                                  if p["patient_id"] != selected_pid]
+
+                col_r1, col_r2, _ = st.columns([1, 1, 4])
+                with col_r1:
+                    if st.button("💾 Save name", key="rename_btn"):
+                        if new_name.strip() and new_name.strip().upper() != current_name:
+                            rename_patient(selected_pid, new_name)
+                            st.success(f"Name updated to **{new_name.strip().upper()}**.")
+                            st.rerun()
+                        else:
+                            st.info("No change detected.")
+
+                # Merge duplicate profiles
+                if other_patients:
+                    st.markdown("---")
+                    st.markdown('<div class="section-label">Merge with another patient profile</div>', unsafe_allow_html=True)
+                    st.caption("Use this when a misspelled name (e.g. 'Baverley' vs 'Beverley') created two profiles for the same person. All reports from this profile will be moved into the selected target and this profile will be deleted.")
+                    merge_options = {f"{p[1]}  ({p[0]})": p[0] for p in other_patients}
+                    merge_target_label = st.selectbox(
+                        "Merge this profile INTO →",
+                        options=list(merge_options.keys()),
+                        key="merge_target_select"
+                    )
+                    merge_target_id = merge_options[merge_target_label]
+                    with col_r2:
+                        if st.button("🔀 Merge profiles", key="merge_btn"):
+                            ok = merge_into_patient(selected_pid, merge_target_id)
+                            if ok:
+                                st.success("Profiles merged. Redirecting to merged profile…")
+                                st.rerun()
+                            else:
+                                st.error("Merge failed — check both profiles exist.")
+
+                # Delete a single report
+                st.markdown("---")
+                st.markdown('<div class="section-label">Delete a specific report</div>', unsafe_allow_html=True)
                 del_date = st.selectbox(
                     "Choose report date to delete",
                     options=report_dates,
                     key="del_date_select"
                 )
-
                 col_a, col_b, _ = st.columns([1, 1, 4])
                 with col_a:
                     if st.button("🗑 Delete this report", key="del_report_btn"):
@@ -480,10 +525,10 @@ elif page == "Patient Profiles":
                         else:
                             st.error("Could not delete — date not found.")
 
+                # Delete entire patient
                 st.markdown("---")
                 st.markdown('<div class="section-label" style="color:#ff6b6b">Delete entire patient record</div>', unsafe_allow_html=True)
-                st.warning(f"This will permanently erase ALL data for **{history['patient_name'].iloc[0]}**.")
-
+                st.warning(f"This will permanently erase ALL data for **{current_name}**.")
                 with col_b:
                     if st.button("⛔ Delete Patient", key="del_patient_btn"):
                         delete_patient(selected_pid)

@@ -68,8 +68,16 @@ EXTRA_ALIASES = {
     "APO Lipoprotein B":    ["apo lipoprotein b", "apolipoproteins b"],
     "Lipoprotein(a)":       ["lipoprotein a ( lp a)", "lipoprotein(a)"],
 
-    # Serology
-    "Anti-Sperm Antibody":  ["anti sperm antibody", "anti-sperm antibody"],
+    # Ratios
+    "LDL/HDL Ratio":        ["ldl/hdl ratio", "ldl hdl ratio"],
+    "CHOL/HDL Ratio":       ["chol/hdl ratio", "chol hdl ratio"],
+
+    # Glucose (post prandial)
+    "Glucose (Post Prandial)": ["glucose-post prandial(2hrs)", "glucose post prandial(2hrs)",
+                                "glucose post prandial", "glucose-post prandial"],
+
+    # Apolipoproteins
+    "APO Lipoprotein E":    ["apolipoproteins e", "apolipoprotein e", "apo lipoprotein e"],
 }
 
 UNIT_CONVERSIONS = {
@@ -91,7 +99,8 @@ _UNIT_MAP = {
     "miu/l": "mIU/L", "miu/ml": "mIU/mL",
     "uiu/ml": "µIU/mL", "uiu/l": "µIU/L",
     # weight
-    "gm/dl": "g/dL", "g/dl": "g/dL",
+    # weight / protein
+    "gm/dl": "g/dL", "g/dl": "g/dL", "g/l": "g/L",
     # serology
     "mu/100ul": "mU/100uL", "mu/ml": "mU/mL",
     # misc
@@ -103,7 +112,7 @@ _UNIT_RE = (
     r'(mg\/dl|pg\/ml|pg\/dl|ng\/ml|ng\/dl'
     r'|ug\/dl|microgm\/dl|microgm\/ml'
     r'|u\/l|iu\/l|miu\/l|miu\/ml|uiu\/ml|\xb5iu\/ml|\xb5iu\/l'
-    r'|gm\/dl|g\/dl|mu\/100ul|mu\/ml|%)'
+    r'|gm\/dl|g\/dl|g\/l|mu\/100ul|mu\/ml|%)'
 )
 
 _DATE_FMTS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"]
@@ -408,7 +417,19 @@ def extract_biomarkers(text, gender=""):
         clean = re.sub(r'\s+', ' ', line).strip()
         if not clean:
             continue
-        if re.search(r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:)\b', clean, re.I):
+        # Skip reference range / methodology / interpretation lines
+        if re.search(
+            r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:|'
+            r'associated tests|interpretation|clinical utility|references?\s*:|'
+            r'note\s*:|disclaimer|decreased levels|increased levels|pregnancy)\b',
+            clean, re.I
+        ):
+            continue
+        # Skip numbered annotation lines (e.g. "1. HbA1c is used for...")
+        if re.match(r'^\d+[\.\)]\s+[A-Z]', clean):
+            continue
+        # Skip lines that are purely a lab test code reference e.g. "(H0018)"
+        if re.search(r'\([A-Z]\d{4,}\)', clean):
             continue
 
         lower = clean.lower()
@@ -428,7 +449,11 @@ def extract_biomarkers(text, gender=""):
                 for lookahead in range(1, 3):
                     if i + lookahead < len(lines):
                         next_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
-                        if re.search(r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:)\b', next_line, re.I):
+                        if re.search(
+                            r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:|'
+                            r'associated tests|interpretation|clinical utility|note\s*:|disclaimer)\b',
+                            next_line, re.I
+                        ):
                             continue
                         found = find_value_in_text(next_line, 0)
                         if found:
@@ -547,6 +572,45 @@ def load_history(patient_id):
     else:
         df["current_age"] = df.get("age_at_test", None)
     return df
+
+
+# ─────────────────────────────────────────────
+# RENAME / MERGE
+# ─────────────────────────────────────────────
+
+def rename_patient(patient_id: str, new_name: str) -> bool:
+    """Update patient_name in all rows of an existing profile."""
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return False
+    df = pd.read_csv(path)
+    df["patient_name"] = new_name.strip().upper()
+    df.to_csv(path, index=False)
+    return True
+
+
+def merge_into_patient(source_id: str, target_id: str) -> bool:
+    """
+    Merge all rows from source_id profile into target_id profile,
+    then delete the source profile. Used when a misspelled name
+    created a duplicate patient that should be the same person.
+    Returns True on success.
+    """
+    source_path = STORE_DIR / f"{source_id}.csv"
+    target_path = STORE_DIR / f"{target_id}.csv"
+    if not source_path.exists() or not target_path.exists():
+        return False
+    source_df = pd.read_csv(source_path)
+    target_df = pd.read_csv(target_path)
+    # Update patient_id in source rows to match target
+    source_df["patient_id"] = target_id
+    source_df["patient_name"] = target_df["patient_name"].iloc[0]
+    combined = pd.concat([target_df, source_df], ignore_index=True)
+    # Drop exact duplicates (same report_date + test_name)
+    combined = combined.drop_duplicates(subset=["report_date", "test_name"], keep="first")
+    combined.to_csv(target_path, index=False)
+    source_path.unlink()
+    return True
 
 
 # ─────────────────────────────────────────────
