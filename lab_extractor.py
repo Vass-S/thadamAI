@@ -126,7 +126,9 @@ EXTRA_ALIASES = {
     # ── Inflammation / Infection ─────────────────────────────────────
     "C Reactive Protein":   ["c reactive protein", "crp", "c-reactive protein",
                              "hs crp", "high sensitivity crp", "hscrp",
-                             "c reactive protein (crp)"],
+                             "c reactive protein (crp)",
+                             "reactive protein (crp)",   # OCR drops leading 'C'
+                             "reactive protein"],
     "Dengue NS1 Antigen":   ["dengue ns1 antigen", "dengue ns1", "ns1 antigen",
                              "dengue ns1 ag"],
 }
@@ -140,7 +142,7 @@ UNIT_CONVERSIONS = {
 
 _UNIT_MAP = {
     # concentration
-    "mg/dl": "mg/dL", "mg/l": "mg/L",
+    "mg/dl": "mg/dL", "mg/l": "mg/L", "mg/ml": "mg/mL",   # mg/L used by CRP
     "pg/ml": "pg/mL", "pg/dl": "pg/dL",
     "ng/ml": "ng/mL", "ng/dl": "ng/dL",
     "ug/dl": "µg/dL", "ug/ml": "µg/mL",
@@ -161,6 +163,8 @@ _UNIT_MAP = {
     "/ul": "cells/µL", "/µl": "cells/µL",
     "million/ul": "million/µL",            # RBC
     "million/µl": "million/µL",
+    "10^3/ul": "10³/µL",                  # Kauvery WBC / platelet / absolute counts
+    "10^6/ul": "10⁶/µL",                  # Kauvery RBC
     "lakhs/cumm": "cells/µL",             # Indian lab alternate unit (1 lakh = 100,000)
     "cumm": "cells/µL",                   # cells per cubic mm = cells/µL
     # misc
@@ -169,11 +173,13 @@ _UNIT_MAP = {
 
 # Regex fragment that matches any known unit (used in find_value_in_text)
 _UNIT_RE = (
-    r'(mg\/dl|pg\/ml|pg\/dl|ng\/ml|ng\/dl'
+    r'(mg\/dl|mg\/l|mg\/ml'               # mg/dL (glucose etc), mg/L (CRP), mg/mL
+    r'|pg\/ml|pg\/dl|ng\/ml|ng\/dl'
     r'|ug\/dl|microgm\/dl|microgm\/ml'
     r'|u\/l|iu\/l|miu\/l|miu\/ml|uiu\/ml|\xb5iu\/ml|\xb5iu\/l'
     r'|gm\/dl|g\/dl|g\/l|mu\/100ul|mu\/ml'
     r'|fl|cells\/ul|cells\/\xb5l|\/ul|\/\xb5l'
+    r'|10\^3\/ul|10\^6\/ul'               # normalised Kauvery count units
     r'|million\/ul|million\/\xb5l|lakhs\/cumm|cumm|%)'
 )
 
@@ -290,37 +296,71 @@ def normalize_unit(unit):
 # METADATA
 # ─────────────────────────────────────────────
 
+def _clean_name_raw(raw: str) -> str:
+    """
+    Strip patient-ID tokens and OCR title artifacts from a raw name string.
+    Handles: 'My, SRINIWAS SRIRAM' (OCR reads Mr. as My,),
+             'P0011168 Mrs. BEVERLEY BARNES', 'Mr. VIJEY KUMAR KB', etc.
+    """
+    s = raw.strip()
+    # 1. Strip patient ID tokens: letter followed by digits (P0011168, POO11168)
+    s = re.sub(r'\b[A-Za-z][A-Za-z0-9]*\d+[A-Za-z0-9]*\b\s*', '', s).strip()
+    # 2. Strip leading title artifacts: Mr. Mrs. Ms. Dr. My, (OCR misspellings of Mr.)
+    s = re.sub(r'^(?:Mr|Mrs|Ms|Dr|My|M[a-z])[\.,\s]+', '', s, flags=re.I).strip()
+    # 3. Strip any remaining leading punctuation
+    s = re.sub(r'^[,.\s]+', '', s).strip()
+    return s.upper()
+
+
 def extract_metadata(text):
     meta = {"name": "", "gender": "", "date": "", "age": None, "phone": ""}
 
-    # Allow optional lab patient-ID token (e.g. "P0006027") between "Patient :" and Mr./Mrs.
+    # ── Format 1: Old Hitech ─────────────────────────────────────────
+    # 'Patient : P0011168 Mr. SRINIWAS SRIRAM (34/M)' or
+    # 'Patient : POO11168 My, SRINIWAS SRIRAM (34/M)'  ← OCR artifact
     m = re.search(
-        r"Patient\s*[:\-]\s*(?:[A-Z]\d+\s+)?(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)\s*\((\d+)\s*/\s*([MF])\)",
+        r"Patient\s*[:\-]\s*(.+?)\s*\((\d+)\s*/\s*([MF])\)",
         text, re.I
     )
     if m:
-        meta["name"]   = re.sub(r'\b[A-Z]\d+\b', '', m.group(1)).strip()
+        meta["name"]   = _clean_name_raw(m.group(1))
         meta["age"]    = int(m.group(2))
         meta["gender"] = m.group(3).upper()
 
-    # ── Metropolis / new-Hitech fallback ─────────────────────────────
-    # Format: "Mr. SRINIWAS S" on its own line; "Age: 36 Year(s) Sex: Male" elsewhere
+    # ── Format 2: Kauvery Hospital ───────────────────────────────────
+    # 'Patient Name : Mr. Vijey Kumar KB'
+    # 'Age / Gender : 39/Years/Male'
     if not meta["name"]:
-        m = re.search(r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w]+(?:\s+\w)?)\s*(?:\n|$|Reference|VID)", text, re.I)
+        m = re.search(
+            r"Patient\s+Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w\s]+?)\s*"
+            r"(?:Order|Collected|Report\s+Date|\n|$)",
+            text, re.I
+        )
         if m:
-            meta["name"] = m.group(1).strip()
+            meta["name"] = m.group(1).strip().upper()
+    if not meta["age"] or not meta["gender"]:
+        m = re.search(r"Age\s*/\s*Gender\s*[:\-]\s*(\d+)\s*/\s*Years?\s*/\s*(Male|Female)", text, re.I)
+        if m:
+            if not meta["age"]:    meta["age"]    = int(m.group(1))
+            if not meta["gender"]: meta["gender"] = "M" if "male" in m.group(2).lower() else "F"
+
+    # ── Format 3: New Hitech / Metropolis ────────────────────────────
+    # 'Mrs. BAVERLEY B  Reference: SELF  VID: ...'
+    # 'Age: 36 Year(s)  Sex: Female'
+    if not meta["name"]:
+        m = re.search(r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w]+(?:\s+[\w]+)*)\s*(?:Reference|VID|\n|$)", text, re.I)
+        if m:
+            meta["name"] = m.group(1).strip().upper()
     if not meta["age"]:
-        m = re.search(r"Age\s*[:\-]\s*(\d+)", text, re.I)
-        if m:
-            meta["age"] = int(m.group(1))
+        m = re.search(r"Age\s*[:\-]?\s*(\d+)", text, re.I)
+        if m: meta["age"] = int(m.group(1))
     if not meta["gender"]:
         m = re.search(r"Sex\s*[:\-]\s*(Male|Female)", text, re.I)
-        if m:
-            meta["gender"] = "M" if m.group(1).upper() == "MALE" else "F"
+        if m: meta["gender"] = "M" if m.group(1).upper() == "MALE" else "F"
 
+    # ── Date ─────────────────────────────────────────────────────────
     for pattern in [
-        r"(?:Reported\s+On|Report\s+Date|Collected\s+On|Collection\s+Date)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-        # OCR sometimes reads ':' as a digit, so allow \S? between 'SID Date' and the date
+        r"(?:Report\s+Date|Reported\s+On|Collected\s+Date|Collected\s+On|Collection\s+Date)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
         r"SID\s+Date\s*\S?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})",
         r"(\d{2}[\/\-]\d{2}[\/\-]\d{4})",
     ]:
@@ -335,7 +375,8 @@ def extract_metadata(text):
             if meta["date"]:
                 break
 
-    # 'TelNo' (OCR merges Tel+No) and exact 10-digit match prevents postcode bleed
+    # ── Phone ─────────────────────────────────────────────────────────
+    # 'TelNo' handles OCR merging of Tel+No without space
     m = re.search(r"(?:Tel\s*No|TelNo|Ph|Phone|Mobile)\s*(?:No\.?)?\s*[:\-]?\s*\+?\s*(\d{10})\b", text, re.I)
     if m:
         meta["phone"] = m.group(1)
@@ -467,13 +508,22 @@ def find_value_in_text(text, pos):
     snippet = text[pos: pos + 100]
     # Strip cid artifacts that pdfplumber emits for special chars
     snippet = re.sub(r'\(cid:\d+\)', '', snippet)
+
+    # Special case: Kauvery-style qualitative results e.g. 'Negative(0.00)'
+    qm = re.search(r'(?:Negative|Positive)\s*\(\s*(\d+(?:\.\d+)?)\s*\)', snippet, re.I)
+    if qm:
+        try:
+            return float(qm.group(1)), ""
+        except ValueError:
+            pass
+
     m = re.search(
         r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)' + r'\s*' + _UNIT_RE,
         snippet, re.IGNORECASE
     )
     if not m:
         # Try without unit — value only
-        m = re.search(r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)', snippet, re.IGNORECASE)
+        m = re.search(r'[:\|\s.]*([<>]?\s*\d+(?:\.\d+)?)', snippet, re.IGNORECASE)
         if not m:
             return None
         raw_val  = m.group(1).replace(" ", "").lstrip("<>")
@@ -485,13 +535,32 @@ def find_value_in_text(text, pos):
         value = float(raw_val)
     except ValueError:
         return None
-    if not (0 < value < 1_000_000):
+    # Allow 0.0 (e.g. Dengue NS1 Negative = 0.00), but reject negatives
+    if value < 0 or value >= 1_000_000:
         return None
     return value, normalize_unit(raw_unit)
 
 
+def _normalize_count_units(text: str) -> str:
+    """
+    Normalize Kauvery-style haematology count units that OCR misreads.
+      10^6/µL → written as '10°6/uL', '106/uL'
+      10^3/µL → OCR'd as '1043/uL', '1043/pL', '10°3/pL', '10^3/yL'
+    All are normalised to '10^3/uL' which is in _UNIT_MAP.
+    """
+    # 10^6/µL variants (OCR reads ° for ^ and the digit gets merged)
+    text = re.sub(r'10[°\^oO][6]/[uµypUP][Ll]', '10^6/uL', text)
+    # 10^3/µL variants
+    text = re.sub(r'10[°\^oO][3]/[uµypUP][Ll]', '10^3/uL', text)
+    # '1043/uL', '1043/pL', '1043/yL' — OCR merges '10^3' as '1043'
+    text = re.sub(r'\b1043/[uµypUP][Ll]\b', '10^3/uL', text)
+    return text
+
+
 def extract_biomarkers(text, gender=""):
     results, seen = [], set()
+    # Normalize OCR count-unit artifacts before line-by-line processing
+    text = _normalize_count_units(text)
     lines = text.split("\n")
 
     for i, line in enumerate(lines):
