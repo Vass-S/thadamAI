@@ -147,7 +147,7 @@ def verify_with_llm(
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-5-20251001",   # Fast + accurate, cost-effective
+            model="claude-haiku-4-5-20251001",   # Fast + cost-effective for verification tasks
             max_tokens=2048,
             system=SYSTEM_PROMPT,
             messages=[{
