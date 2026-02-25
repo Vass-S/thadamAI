@@ -78,6 +78,57 @@ EXTRA_ALIASES = {
 
     # Apolipoproteins
     "APO Lipoprotein E":    ["apolipoproteins e", "apolipoprotein e", "apo lipoprotein e"],
+
+    # ── Haematology (Full Blood Count) ──────────────────────────────
+    "Haemoglobin":          ["haemoglobin", "hemoglobin", "hgb", "hb"],
+    "Haematocrit":          ["haematocrit", "hematocrit", "hct",
+                             "packed cell volume", "pcv"],
+    "Total RBC Count":      ["total rbc count", "rbc count", "red blood cell count",
+                             "red cell count", "rbc"],
+    "MCV":                  ["mean corpuscular volume", "mcv",
+                             "mean corpuscular volume (mcv)"],
+    "MCH":                  ["mean corpuscular haemoglobin", "mch",
+                             "(mch) mean corpuscular haemoglobin",
+                             "mean corpuscular hemoglobin",
+                             "mch (mean corpuscular haemoglobin)"],
+    "MCHC":                 ["mean corpuscular haemoglobin concentration", "mchc",
+                             "(mchc) mean corpuscular haemoglobin",
+                             "mean corpuscular hemoglobin concentration",
+                             "mchc (mean corpuscular haemoglobin concentration)"],
+    "RDW-CV":               ["rdw - cv", "rdw-cv", "rdw cv", "rdw",
+                             "red cell distribution width"],
+    "Total WBC Count":      ["total wbc count", "wbc count", "white blood cell count",
+                             "total leucocyte count", "tlc", "wbc",
+                             "white cell count"],
+    "Neutrophil":           ["neutrophil", "neutrophils", "neutrophil %",
+                             "neutrophil count %"],
+    "Lymphocyte":           ["lymphocyte", "lymphocytes", "lymphocyte %",
+                             "lymphocyte count %"],
+    "Monocyte":             ["monocyte", "monocytes", "monocyte %",
+                             "monocyte count %"],
+    "Eosinophil":           ["eosinophil", "eosinophils", "eosinophil %",
+                             "eosinophil count %"],
+    "Basophil":             ["basophil", "basophils", "basophil %",
+                             "basophil count %"],
+    "Absolute Neutrophil Count": ["absolute neutrophil count",
+                                  "absolute neutrophil count (anc)", "anc"],
+    "Absolute Lymphocyte Count": ["absolute lymphocyte count",
+                                  "absolute lymphocyte count (alc)", "alc"],
+    "Absolute Monocyte Count":   ["absolute monocyte count",
+                                  "absolute monocyte count (amc)", "amc"],
+    "Absolute Eosinophil Count": ["absolute eosinophil count",
+                                  "absolute eosinophil count (aec)", "aec"],
+    "Absolute Basophil Count":   ["absolute basophil count",
+                                  "absolute basophil count (abc)", "abc"],
+    "Platelet Count":       ["platelet count", "platelets", "plt",
+                             "thrombocyte count"],
+
+    # ── Inflammation / Infection ─────────────────────────────────────
+    "C Reactive Protein":   ["c reactive protein", "crp", "c-reactive protein",
+                             "hs crp", "high sensitivity crp", "hscrp",
+                             "c reactive protein (crp)"],
+    "Dengue NS1 Antigen":   ["dengue ns1 antigen", "dengue ns1", "ns1 antigen",
+                             "dengue ns1 ag"],
 }
 
 UNIT_CONVERSIONS = {
@@ -88,7 +139,7 @@ UNIT_CONVERSIONS = {
 }
 
 _UNIT_MAP = {
-    # volume-based
+    # concentration
     "mg/dl": "mg/dL", "mg/l": "mg/L",
     "pg/ml": "pg/mL", "pg/dl": "pg/dL",
     "ng/ml": "ng/mL", "ng/dl": "ng/dL",
@@ -98,11 +149,20 @@ _UNIT_MAP = {
     "u/l": "U/L", "iu/l": "IU/L",
     "miu/l": "mIU/L", "miu/ml": "mIU/mL",
     "uiu/ml": "µIU/mL", "uiu/l": "µIU/L",
-    # weight
     # weight / protein
     "gm/dl": "g/dL", "g/dl": "g/dL", "g/l": "g/L",
     # serology
     "mu/100ul": "mU/100uL", "mu/ml": "mU/mL",
+    # haematology
+    "fl": "fL",                            # MCV
+    "pg": "pg",                            # MCH
+    "cells/ul": "cells/µL",               # counts
+    "cells/µl": "cells/µL",
+    "/ul": "cells/µL", "/µl": "cells/µL",
+    "million/ul": "million/µL",            # RBC
+    "million/µl": "million/µL",
+    "lakhs/cumm": "cells/µL",             # Indian lab alternate unit (1 lakh = 100,000)
+    "cumm": "cells/µL",                   # cells per cubic mm = cells/µL
     # misc
     "%": "%",
 }
@@ -112,7 +172,9 @@ _UNIT_RE = (
     r'(mg\/dl|pg\/ml|pg\/dl|ng\/ml|ng\/dl'
     r'|ug\/dl|microgm\/dl|microgm\/ml'
     r'|u\/l|iu\/l|miu\/l|miu\/ml|uiu\/ml|\xb5iu\/ml|\xb5iu\/l'
-    r'|gm\/dl|g\/dl|g\/l|mu\/100ul|mu\/ml|%)'
+    r'|gm\/dl|g\/dl|g\/l|mu\/100ul|mu\/ml'
+    r'|fl|cells\/ul|cells\/\xb5l|\/ul|\/\xb5l'
+    r'|million\/ul|million\/\xb5l|lakhs\/cumm|cumm|%)'
 )
 
 _DATE_FMTS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"]
@@ -123,6 +185,21 @@ _DATE_FMTS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"]
 # ─────────────────────────────────────────────
 
 def load_dictionary(path):
+    """
+    Load biomarker definitions from CSV.
+
+    CSV columns (all required):
+      canonical_name  – display name used throughout the app  (e.g. "Haemoglobin")
+      unit            – canonical unit                        (e.g. "g/dL")
+      sex             – "male" | "female" | "both"
+      normal_range    – "low-high" or "Negative" etc.        (e.g. "13-17")
+      aliases         – comma-separated search strings        (e.g. "hb,hgb,hemoglobin")
+
+    One canonical_name may have multiple rows (one per sex). 
+    The aliases column replaces the hard-coded EXTRA_ALIASES dict — just add
+    aliases directly in the CSV. EXTRA_ALIASES in code acts as a fallback only
+    for tests not yet in the CSV.
+    """
     df = pd.read_csv(path, encoding="latin1")
     biomarkers = {}
     alias_map  = {}
@@ -135,18 +212,21 @@ def load_dictionary(path):
             "sex":          str(row["sex"]).strip().lower(),
             "normal_range": str(row["normal_range"]).strip(),
         })
-        if pd.notna(row["aliases"]):
+        # CSV aliases take priority — process them first
+        if pd.notna(row["aliases"]) and str(row["aliases"]).strip():
             for alias in str(row["aliases"]).split(","):
                 a = alias.strip().lower()
                 if a and a not in alias_map:
                     alias_map[a] = canonical
 
+    # EXTRA_ALIASES in code = fallback for tests not yet in CSV
     for canonical, aliases in EXTRA_ALIASES.items():
         if canonical not in biomarkers:
-            continue
+            # Test not in CSV at all — register a minimal entry so it can be flagged
+            biomarkers[canonical] = {"unit": "", "sex_rows": [{"sex": "both", "normal_range": ""}]}
         for alias in aliases:
             a = alias.strip().lower()
-            if a not in alias_map:
+            if a not in alias_map:          # CSV wins; code fallback fills gaps
                 alias_map[a] = canonical
 
     all_aliases = sorted(alias_map.keys(), key=len, reverse=True)
@@ -240,7 +320,8 @@ def extract_metadata(text):
 
     for pattern in [
         r"(?:Reported\s+On|Report\s+Date|Collected\s+On|Collection\s+Date)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-        r"SID\s+Date\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
+        # OCR sometimes reads ':' as a digit, so allow \S? between 'SID Date' and the date
+        r"SID\s+Date\s*\S?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})",
         r"(\d{2}[\/\-]\d{2}[\/\-]\d{4})",
     ]:
         m = re.search(pattern, text, re.I)
@@ -254,10 +335,10 @@ def extract_metadata(text):
             if meta["date"]:
                 break
 
-    m = re.search(r"(?:Tel|Ph|Phone|Mobile)\s*(?:No\.?)?\s*[:\-]?\s*\+?(\d[\d\s\-]{9,})", text, re.I)
+    # 'TelNo' (OCR merges Tel+No) and exact 10-digit match prevents postcode bleed
+    m = re.search(r"(?:Tel\s*No|TelNo|Ph|Phone|Mobile)\s*(?:No\.?)?\s*[:\-]?\s*\+?\s*(\d{10})\b", text, re.I)
     if m:
-        digits = re.sub(r'\D', '', m.group(1))
-        meta["phone"] = digits[-10:] if len(digits) >= 10 else digits
+        meta["phone"] = m.group(1)
 
     return meta
 
@@ -515,6 +596,20 @@ def compute_current_age(age_at_test: int, report_date: str) -> int:
 _OCR_THRESHOLD = 150
 
 
+def _strip_ocr_line_noise(text: str) -> str:
+    """
+    Strip barcode/logo OCR artifacts (—, ==, =n, etc.) from line beginnings.
+    These appear when Tesseract reads the barcode column on the left margin
+    of Hitech-format reports.
+    """
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        # Remove any leading run of non-alphanumeric, non-parenthesis chars
+        cleaned.append(re.sub(r'^[^A-Za-z0-9(]+', '', line))
+    return "\n".join(cleaned)
+
+
 def _extract_text_ocr(pdf_path: Path) -> str:
     """
     Convert each PDF page to a 300-dpi image and run Tesseract OCR.
@@ -539,7 +634,8 @@ def _extract_text_ocr(pdf_path: Path) -> str:
             page, config="--oem 3 --psm 6"
         )
         text += page_text + "\n"
-    return text
+    # Strip leading barcode/logo artifacts from each line
+    return _strip_ocr_line_noise(text)
 
 
 def _is_image_pdf(text: str) -> bool:
