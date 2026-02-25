@@ -2,3 +2,5 @@ pdfplumber
 pandas
 streamlit>=1.54.0
 plotly
+pdf2image
+pytesseract

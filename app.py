@@ -384,7 +384,16 @@ if page == "Upload Reports":
                 save_report(df)
                 pid = df["patient_id"].iloc[0]
                 results_by_patient.setdefault(pid, []).append(df)
-                st.success(f"✓ **{uf.name}** — {len(df)} tests · {df['patient_name'].iloc[0]}")
+                ocr_used = df.get("ocr_extracted", pd.Series([False])).iloc[0]
+                if ocr_used:
+                    st.success(f"✓ **{uf.name}** — {len(df)} tests · {df['patient_name'].iloc[0]}")
+                    st.warning(
+                        "📷 **OCR mode** — this PDF was image-based so text was extracted via "
+                        "optical character recognition. Values are usually correct but please "
+                        "verify any hormone or thyroid results (TSH, FSH) against the original report."
+                    )
+                else:
+                    st.success(f"✓ **{uf.name}** — {len(df)} tests · {df['patient_name'].iloc[0]}")
 
             progress.progress((i + 1) / len(uploaded_files))
 

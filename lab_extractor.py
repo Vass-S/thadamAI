@@ -506,20 +506,81 @@ def compute_current_age(age_at_test: int, report_date: str) -> int:
         return age_at_test
 
 
+# ─────────────────────────────────────────────
+# OCR FALLBACK
+# ─────────────────────────────────────────────
+
+# Minimum characters of meaningful text required to trust pdfplumber output.
+# Image-only PDFs return near-empty strings; anything below this triggers OCR.
+_OCR_THRESHOLD = 150
+
+
+def _extract_text_ocr(pdf_path: Path) -> str:
+    """
+    Convert each PDF page to a 300-dpi image and run Tesseract OCR.
+    Returns combined text. Raises ImportError if dependencies are missing.
+    """
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+    except ImportError as e:
+        raise ImportError(
+            "OCR requires pdf2image and pytesseract. "
+            "Add 'pdf2image pytesseract' to requirements.txt "
+            "and 'tesseract-ocr poppler-utils' to packages.txt."
+        ) from e
+
+    pages = convert_from_path(str(pdf_path), dpi=300)
+    text = ""
+    for page in pages:
+        # --oem 3  : LSTM engine (best accuracy)
+        # --psm 6  : Assume uniform block of text (handles multi-column forms well)
+        page_text = pytesseract.image_to_string(
+            page, config="--oem 3 --psm 6"
+        )
+        text += page_text + "\n"
+    return text
+
+
+def _is_image_pdf(text: str) -> bool:
+    """Return True if pdfplumber extracted too little text to be useful."""
+    # Count only alphanumeric chars — ignore whitespace and noise
+    useful = re.sub(r'\s+', '', text)
+    return len(useful) < _OCR_THRESHOLD
+
+
 def process_pdf(pdf_path, verbose=True):
     pdf_path = Path(pdf_path)
+
+    # ── Pass 1: pdfplumber (fast, exact for machine-readable PDFs) ──
     with pdfplumber.open(pdf_path) as pdf:
         text = ""
         for page in pdf.pages:
             t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
             text += t + "\n"
 
+    ocr_used = False
+
+    # ── Pass 2: OCR fallback for image/scanned PDFs ──────────────────
+    if _is_image_pdf(text):
+        if verbose:
+            print(f"  {pdf_path.name}: low text yield — switching to OCR…")
+        try:
+            text = _extract_text_ocr(pdf_path)
+            ocr_used = True
+        except ImportError as e:
+            if verbose:
+                print(f"  OCR unavailable: {e}")
+            return pd.DataFrame()
+
     meta    = extract_metadata(text)
     pid     = make_patient_id(meta)
     results = extract_biomarkers(text, gender=meta.get("gender", ""))
 
     if verbose:
-        print(f"  {pdf_path.name}: {len(results)} tests | {meta.get('name','?')} | {meta.get('date','?')}")
+        mode = " [OCR]" if ocr_used else ""
+        print(f"  {pdf_path.name}{mode}: {len(results)} tests | "
+              f"{meta.get('name','?')} | {meta.get('date','?')}")
 
     if not results:
         return pd.DataFrame()
@@ -532,12 +593,13 @@ def process_pdf(pdf_path, verbose=True):
     df["report_date"]   = meta["date"]
     df["source_file"]   = pdf_path.name
     df["file_hash"]     = file_hash(pdf_path)
-    # Compute birth year so current age stays accurate across future uploads
+    df["ocr_extracted"] = ocr_used   # flag for UI warning
     if meta.get("age") and meta.get("date"):
         df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
     else:
         df["birth_year"] = None
     return df
+
 
 
 def save_report(df):
