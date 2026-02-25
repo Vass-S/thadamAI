@@ -4,3 +4,4 @@ streamlit>=1.54.0
 plotly
 pdf2image
 pytesseract
+anthropic>=0.34.0

@@ -736,7 +736,7 @@ def process_pdf(pdf_path, verbose=True):
         except ImportError as e:
             if verbose:
                 print(f"  OCR unavailable: {e}")
-            return pd.DataFrame()
+            return pd.DataFrame(), ""
 
     meta    = extract_metadata(text)
     pid     = make_patient_id(meta)
@@ -748,7 +748,7 @@ def process_pdf(pdf_path, verbose=True):
               f"{meta.get('name','?')} | {meta.get('date','?')}")
 
     if not results:
-        return pd.DataFrame()
+        return pd.DataFrame(), text
 
     df = pd.DataFrame(results)
     df["patient_id"]    = pid
@@ -758,12 +758,14 @@ def process_pdf(pdf_path, verbose=True):
     df["report_date"]   = meta["date"]
     df["source_file"]   = pdf_path.name
     df["file_hash"]     = file_hash(pdf_path)
-    df["ocr_extracted"] = ocr_used   # flag for UI warning
+    df["ocr_extracted"] = ocr_used
+    df["llm_verified"]  = False   # set to True after LLM review + acceptance
+    df["llm_corrected"] = False   # set to True if value was changed by LLM
     if meta.get("age") and meta.get("date"):
         df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
     else:
         df["birth_year"] = None
-    return df
+    return df, text   # return raw_text so caller can pass it to LLM verifier
 
 
 

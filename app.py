@@ -15,6 +15,10 @@ from lab_extractor import (
     delete_patient, delete_report_by_date, rename_patient,
     merge_into_patient, STORE_DIR
 )
+from llm_verifier import (
+    verify_with_llm, build_diff, apply_corrections,
+    save_pending_review, load_pending_reviews, delete_pending_review
+)
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -318,7 +322,19 @@ def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefi
 
 with st.sidebar:
     st.markdown('<div class="section-label">Navigation</div>', unsafe_allow_html=True)
-    page = st.radio("page", ["Upload Reports", "Patient Profiles", "About"], label_visibility="collapsed")
+
+    # Show badge on LLM Review if there are pending items
+    pending = load_pending_reviews()
+    review_label = f"🔍 LLM Review ({len(pending)})" if pending else "🔍 LLM Review"
+
+    page = st.radio(
+        "page",
+        ["Upload Reports", "Patient Profiles", review_label, "About"],
+        label_visibility="collapsed"
+    )
+    # Normalise label so downstream comparisons work regardless of badge count
+    if page.startswith("🔍 LLM Review"):
+        page = "LLM Review"
 
     st.markdown("---")
     st.markdown('<div class="section-label">Stored Patients</div>', unsafe_allow_html=True)
@@ -354,6 +370,18 @@ st.markdown("""
 if page == "Upload Reports":
     st.markdown('<div class="section-label">Upload Lab Reports</div>', unsafe_allow_html=True)
 
+    # ── API key status ────────────────────────────────────────────────
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else ""
+    if not api_key:
+        import os
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    llm_enabled = bool(api_key)
+    if llm_enabled:
+        st.caption("🤖 LLM verification enabled — Claude will check extracted values after processing.")
+    else:
+        st.caption("⚪ LLM verification disabled — add ANTHROPIC_API_KEY to Streamlit secrets to enable.")
+
     uploaded_files = st.file_uploader(
         "Drop PDF lab reports here",
         type="pdf",
@@ -370,31 +398,67 @@ if page == "Upload Reports":
                 tmp.write(uf.read())
                 tmp_path = Path(tmp.name)
 
-            # ── Duplicate check ──────────────────────────
+            # ── Duplicate check ───────────────────────────
             if is_duplicate_file(tmp_path):
                 st.warning(f"⏭️ **{uf.name}** — already processed, skipping duplicate.")
                 progress.progress((i + 1) / len(uploaded_files))
                 continue
 
-            df = process_pdf(tmp_path, verbose=False)
+            # ── Regex extraction ──────────────────────────
+            df, raw_text = process_pdf(tmp_path, verbose=False)
 
             if df.empty:
                 st.warning(f"⚠️ **{uf.name}** — no data extracted. Check PDF format.")
-            else:
-                save_report(df)
-                pid = df["patient_id"].iloc[0]
-                results_by_patient.setdefault(pid, []).append(df)
-                ocr_used = df.get("ocr_extracted", pd.Series([False])).iloc[0]
-                if ocr_used:
-                    st.success(f"✓ **{uf.name}** — {len(df)} tests · {df['patient_name'].iloc[0]}")
-                    st.warning(
-                        "📷 **OCR mode** — this PDF was image-based so text was extracted via "
-                        "optical character recognition. Values are usually correct but please "
-                        "verify any hormone or thyroid results (TSH, FSH) against the original report."
-                    )
-                else:
-                    st.success(f"✓ **{uf.name}** — {len(df)} tests · {df['patient_name'].iloc[0]}")
+                progress.progress((i + 1) / len(uploaded_files))
+                continue
 
+            ocr_used = df.get("ocr_extracted", pd.Series([False])).iloc[0]
+            pid      = df["patient_id"].iloc[0]
+            name     = df["patient_name"].iloc[0]
+
+            # ── LLM verification ──────────────────────────
+            if llm_enabled:
+                with st.spinner(f"🤖 Claude is verifying {uf.name}…"):
+                    llm_result = verify_with_llm(raw_text, df, api_key=api_key)
+
+                if llm_result.get("error"):
+                    st.warning(f"⚠️ LLM check failed for **{uf.name}**: {llm_result['error']}")
+                    # Save anyway without LLM corrections
+                    save_report(df)
+                else:
+                    diff = build_diff(df, llm_result)
+                    corrections = diff[diff["needs_review"]]
+                    n_corrections = len(corrections)
+
+                    if n_corrections == 0:
+                        # All confirmed — apply and save immediately
+                        st.success(
+                            f"✓ **{uf.name}** — {len(df)} tests · {name} · "
+                            f"🤖 all {len(df)} values confirmed by Claude"
+                        )
+                        df["llm_verified"] = True
+                        save_report(df)
+                    else:
+                        # Save with original values, queue corrections for review
+                        save_report(df)
+                        report_date = df["report_date"].iloc[0]
+                        save_pending_review(pid, report_date, diff, raw_text)
+
+                        st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
+                        st.warning(
+                            f"🔍 **{n_corrections} value(s) need review** — Claude flagged "
+                            f"potential errors or found missed tests. "
+                            f"Go to **LLM Review** in the sidebar to inspect and accept/reject."
+                        )
+            else:
+                # No LLM — just save regex results
+                save_report(df)
+                st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
+
+            if ocr_used:
+                st.caption("📷 OCR mode — scanned PDF. Verify hormone/thyroid values against original.")
+
+            results_by_patient.setdefault(pid, []).append(df)
             progress.progress((i + 1) / len(uploaded_files))
 
         if results_by_patient:
@@ -432,7 +496,7 @@ if page == "Upload Reports":
                 Upload lab reports to get started
             </div>
             <div style="font-size:0.8rem">
-                Supports PDF reports from Hitech, Metropolis, and similar labs.<br>
+                Supports PDF reports from Hitech, Kauvery, Metropolis, and similar labs.<br>
                 Patient identity is detected automatically from the PDF.
             </div>
         </div>""", unsafe_allow_html=True)
@@ -579,6 +643,140 @@ elif page == "Patient Profiles":
                     file_name=f"{safe_name(history)}_full_history.csv",
                     mime="text/csv"
                 )
+
+
+# ═══════════════════════════════════════════════
+# PAGE: LLM REVIEW
+# ═══════════════════════════════════════════════
+
+elif page == "LLM Review":
+    st.markdown('<div class="section-label">🔍 LLM Verification Review</div>', unsafe_allow_html=True)
+    st.markdown(
+        "Claude checked these reports after regex extraction and flagged potential errors or "
+        "missed tests. Review each item and **Accept** or **Reject** the suggestion.",
+        unsafe_allow_html=False
+    )
+
+    pending = load_pending_reviews()
+
+    if not pending:
+        st.success("✓ No pending reviews — all reports are verified.")
+    else:
+        for review in pending:
+            pid         = review["patient_id"]
+            report_date = review["report_date"]
+            diff_rows   = review.get("diff", [])
+
+            if not diff_rows:
+                continue
+
+            diff = pd.DataFrame(diff_rows)
+            flagged = diff[diff["needs_review"] == True]
+
+            if flagged.empty:
+                delete_pending_review(pid, report_date)
+                continue
+
+            # Find patient name
+            history = load_history(pid)
+            patient_name = history["patient_name"].iloc[0] if not history.empty else pid
+
+            with st.expander(
+                f"📋 {patient_name} · {report_date} · {len(flagged)} item(s) to review",
+                expanded=True
+            ):
+                # Show the diff table
+                st.markdown('<div class="section-label">Flagged Values</div>', unsafe_allow_html=True)
+
+                accepted_keys = []
+                rejected_keys = []
+
+                for _, row in flagged.iterrows():
+                    test      = row["test_name"]
+                    status    = row["status"]
+                    conf      = row.get("confidence", "high")
+                    note      = row.get("note", "")
+                    r_val     = row["regex_value"]
+                    r_unit    = row.get("regex_unit", "")
+                    llm_val   = row["llm_value"]
+                    llm_unit  = row.get("llm_unit", "")
+
+                    # Colour-code by status
+                    if status == "missed_by_regex":
+                        badge = "🆕 **MISSED**"
+                        desc  = f"Claude found this test in the report but regex missed it: **{llm_val} {llm_unit}**"
+                    elif status == "corrected":
+                        badge = "⚠️ **CORRECTED**"
+                        desc  = f"Regex extracted **{r_val} {r_unit}** → Claude says **{llm_val} {llm_unit}**"
+                    else:
+                        badge = "❓ **LOW CONFIDENCE**"
+                        desc  = f"Regex extracted **{r_val} {r_unit}** — Claude is unsure"
+
+                    col_info, col_accept, col_reject = st.columns([5, 1, 1])
+
+                    with col_info:
+                        st.markdown(f"{badge} &nbsp; **{test}**", unsafe_allow_html=True)
+                        st.caption(desc + (f"  \n_Note: {note}_" if note else ""))
+                        if conf == "low":
+                            st.caption("⚠️ Claude has low confidence in this correction")
+
+                    widget_key = f"review_{pid}_{report_date}_{test}"
+                    with col_accept:
+                        if st.button("✓ Accept", key=f"acc_{widget_key}", type="primary"):
+                            accepted_keys.append(test)
+                    with col_reject:
+                        if st.button("✗ Reject", key=f"rej_{widget_key}"):
+                            rejected_keys.append(test)
+
+                st.markdown("---")
+                col_all, col_none, _ = st.columns([1.5, 1.5, 5])
+                with col_all:
+                    if st.button("✓ Accept All", key=f"acc_all_{pid}_{report_date}"):
+                        accepted_keys = flagged["test_name"].tolist()
+                with col_none:
+                    if st.button("✗ Reject All", key=f"rej_all_{pid}_{report_date}"):
+                        rejected_keys = flagged["test_name"].tolist()
+
+                # Process decisions
+                if accepted_keys or rejected_keys:
+                    if accepted_keys:
+                        # Load current saved data and apply corrections
+                        current_history = load_history(pid)
+                        report_df = current_history[
+                            current_history["report_date"].dt.strftime("%Y-%m-%d") == report_date
+                        ].copy()
+
+                        if not report_df.empty:
+                            corrected_df = apply_corrections(report_df, diff, accepted_keys)
+                            corrected_df["report_date"] = report_date
+
+                            # Remove old rows for this date and re-save with corrections
+                            other_dates = current_history[
+                                current_history["report_date"].dt.strftime("%Y-%m-%d") != report_date
+                            ]
+                            full_df = pd.concat([other_dates, corrected_df], ignore_index=True)
+                            csv_path = history.iloc[0].name if hasattr(history, 'iloc') else None
+
+                            from lab_extractor import STORE_DIR as _STORE_DIR
+                            csv_path = _STORE_DIR / f"{pid}.csv"
+                            full_df.to_csv(csv_path, index=False)
+
+                            st.success(
+                                f"✓ Applied {len(accepted_keys)} correction(s) for "
+                                f"{patient_name} · {report_date}"
+                            )
+
+                    if rejected_keys:
+                        st.info(f"Rejected {len(rejected_keys)} suggestion(s) — original values kept.")
+
+                    # Clear this pending review
+                    remaining = [
+                        t for t in flagged["test_name"]
+                        if t not in accepted_keys and t not in rejected_keys
+                    ]
+                    if not remaining:
+                        delete_pending_review(pid, report_date)
+                        st.rerun()
 
 
 # ═══════════════════════════════════════════════
