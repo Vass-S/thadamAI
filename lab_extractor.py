@@ -210,20 +210,38 @@ def load_dictionary(path):
     biomarkers = {}
     alias_map  = {}
 
-    for _, row in df.iterrows():
-        canonical = row["canonical_name"].strip()
-        if canonical not in biomarkers:
-            biomarkers[canonical] = {"unit": str(row["unit"]).strip(), "sex_rows": []}
-        biomarkers[canonical]["sex_rows"].append({
-            "sex":          str(row["sex"]).strip().lower(),
-            "normal_range": str(row["normal_range"]).strip(),
-        })
-        # CSV aliases take priority — process them first
-        if pd.notna(row["aliases"]) and str(row["aliases"]).strip():
-            for alias in str(row["aliases"]).split(","):
-                a = alias.strip().lower()
-                if a and a not in alias_map:
-                    alias_map[a] = canonical
+    # Guard: check required columns exist before iterating
+    required_cols = {"canonical_name", "unit", "sex", "normal_range", "aliases"}
+    missing_cols  = required_cols - set(df.columns)
+    if missing_cols:
+        raise ValueError(
+            f"Biomarker CSV is missing columns: {missing_cols}. "
+            f"Found: {list(df.columns)}. "
+            f"Check the CSV header row is intact and not shifted."
+        )
+
+    import warnings
+    for row_num, (_, row) in enumerate(df.iterrows(), start=2):  # start=2: row 1 = header
+        # Skip blank rows silently — common artifact of Excel editing
+        if pd.isna(row["canonical_name"]) or str(row["canonical_name"]).strip() == "":
+            continue
+        try:
+            canonical = str(row["canonical_name"]).strip()
+            if canonical not in biomarkers:
+                biomarkers[canonical] = {"unit": str(row["unit"]).strip(), "sex_rows": []}
+            biomarkers[canonical]["sex_rows"].append({
+                "sex":          str(row["sex"]).strip().lower(),
+                "normal_range": str(row["normal_range"]).strip(),
+            })
+            # CSV aliases take priority — process them first
+            if pd.notna(row["aliases"]) and str(row["aliases"]).strip():
+                for alias in str(row["aliases"]).split(","):
+                    a = alias.strip().lower()
+                    if a and a not in alias_map:
+                        alias_map[a] = canonical
+        except Exception as e:
+            # Log the bad row but keep going — don't crash the whole app
+            warnings.warn(f"Skipping CSV row {row_num} ('{row.get('canonical_name', '?')}\'): {e}")
 
     # EXTRA_ALIASES in code = fallback for tests not yet in CSV
     for canonical, aliases in EXTRA_ALIASES.items():
@@ -359,20 +377,64 @@ def extract_metadata(text):
         if m: meta["gender"] = "M" if m.group(1).upper() == "MALE" else "F"
 
     # ── Date ─────────────────────────────────────────────────────────
+    _MONTH_MAP = {
+        "jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
+        "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12,
+    }
+    _DATE_FMTS_EXT = _DATE_FMTS + ["%d/%m/%y", "%Y-%m-%d", "%d-%b-%Y", "%d %b %Y",
+                                     "%B %d, %Y", "%d %B %Y", "%d.%b.%Y"]
+
+    def _try_parse(s):
+        """Try every known format; also handle '28 Nov 2024' style."""
+        s = s.strip()
+        for fmt in _DATE_FMTS_EXT:
+            try:
+                return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+        # Named month: 28-Nov-2024 / 28 Nov 2024 / Nov 28 2024 etc.
+        nm = re.match(
+            r"(\d{1,2})[-\s\.]([A-Za-z]{3,9})[-\s\.](\d{2,4})|"
+            r"([A-Za-z]{3,9})[-\s\.](\d{1,2})[-\s\.](\d{2,4})",
+            s)
+        if nm:
+            try:
+                if nm.group(1):  # dd-Mon-yyyy
+                    d, mon, y = nm.group(1), nm.group(2)[:3].lower(), nm.group(3)
+                else:            # Mon-dd-yyyy
+                    mon, d, y = nm.group(4)[:3].lower(), nm.group(5), nm.group(6)
+                mo = _MONTH_MAP.get(mon)
+                if mo:
+                    yr = int(y) + (2000 if len(y)==2 else 0)
+                    return datetime(yr, mo, int(d)).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        return ""
+
     for pattern in [
-        r"(?:Report\s+Date|Reported\s+On|Collected\s+Date|Collected\s+On|Collection\s+Date)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-        r"SID\s+Date\s*\S?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})",
+        # Labelled date (most reliable — try first)
+        r"(?:Report\s+Date|Reported\s+On|Collected\s+Date|Collected\s+On|"
+        r"Collection\s+Date|Sample\s+(?:Collection\s+)?Date|Test\s+Date|"
+        r"Analysis\s+Date|Date\s+of\s+(?:Collection|Report|Test)|"
+        r"Received\s+Date|Processed\s+Date|Authorised\s+(?:Date|On)|"
+        r"SID\s+Date)\s*[:\-]?\s*"
+        r"(\d{1,2}[\s\/\-\.][\w]{2,9}[\s\/\-\.]\d{2,4}"
+        r"|\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}"
+        r"|\d{4}-\d{2}-\d{2})",
+        # ISO format yyyy-mm-dd anywhere
+        r"(\d{4}-\d{2}-\d{2})",
+        # dd-Mon-yyyy or dd Mon yyyy anywhere
+        r"(\d{1,2}[-\s][A-Za-z]{3,9}[-\s]\d{4})",
+        # Fallback: bare dd/mm/yyyy or dd-mm-yyyy
         r"(\d{2}[\/\-]\d{2}[\/\-]\d{4})",
+        # Two-digit year fallback dd/mm/yy
+        r"(\d{2}[\/\-]\d{2}[\/\-]\d{2})\b",
     ]:
         m = re.search(pattern, text, re.I)
         if m:
-            for fmt in _DATE_FMTS:
-                try:
-                    meta["date"] = datetime.strptime(m.group(1), fmt).strftime("%Y-%m-%d")
-                    break
-                except ValueError:
-                    continue
-            if meta["date"]:
+            parsed = _try_parse(m.group(1))
+            if parsed:
+                meta["date"] = parsed
                 break
 
     # ── Phone ─────────────────────────────────────────────────────────

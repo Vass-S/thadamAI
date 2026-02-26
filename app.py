@@ -18,6 +18,7 @@ from lab_extractor import (
 )
 from llm_verifier import (
     verify_with_llm, build_diff, apply_corrections,
+    get_metadata_corrections,
     save_pending_review, load_pending_reviews, delete_pending_review
 )
 
@@ -373,6 +374,25 @@ if page == "Upload Reports":
     uploaded_files = st.file_uploader("Drop PDF lab reports here", type="pdf",
                                        accept_multiple_files=True, label_visibility="collapsed")
 
+    # Date override inputs — shown before processing so user can fix missing dates
+    if uploaded_files:
+        with st.expander("⚙️ Date overrides (use if a report's date wasn't detected)", expanded=False):
+            st.caption("Leave blank to use the date extracted from the PDF. "
+                       "Fill in only if the Trends tab shows 'Need at least 2 reports' "
+                       "even after uploading multiple reports for the same patient.")
+            date_overrides = {}
+            for uf in uploaded_files:
+                v = st.text_input(
+                    f"{uf.name}  (YYYY-MM-DD)",
+                    value="",
+                    key=f"date_override_{uf.name}",
+                    placeholder="e.g. 2024-11-28",
+                )
+                if v.strip():
+                    date_overrides[uf.name] = v.strip()
+    else:
+        date_overrides = {}
+
     if uploaded_files and st.button("⟳  Process Reports"):
         progress = st.progress(0)
         results_by_patient = {}
@@ -394,6 +414,19 @@ if page == "Upload Reports":
                 progress.progress((i + 1) / len(uploaded_files))
                 continue
 
+            # ── Apply date override if user supplied one or extraction missed it ──
+            extracted_date = df["report_date"].iloc[0] if not df.empty else ""
+            override = date_overrides.get(uf.name, "").strip()
+            if override:
+                df["report_date"] = override
+                st.caption(f"📅 Date override applied for **{uf.name}**: {override}")
+            elif not extracted_date:
+                st.warning(
+                    f"⚠️ **{uf.name}** — could not detect report date. "
+                    f"Expand **Date overrides** above and enter the date manually, "
+                    f"then re-upload."
+                )
+
             ocr_used = df.get("ocr_extracted", pd.Series([False])).iloc[0]
             pid  = df["patient_id"].iloc[0]
             name = df["patient_name"].iloc[0]
@@ -405,17 +438,39 @@ if page == "Upload Reports":
                     st.warning(f"⚠️ LLM check failed for **{uf.name}**: {llm_result['error']}")
                     save_report(df)
                 else:
-                    diff = build_diff(df, llm_result)
-                    n_corrections = len(diff[diff["needs_review"]])
-                    if n_corrections == 0:
+                    diff         = build_diff(df, llm_result)
+                    meta_corr    = get_metadata_corrections(df, llm_result)
+                    meta_issues  = meta_corr.get("metadata_issues", [])
+
+                    # Auto-apply date correction immediately if regex missed it
+                    if meta_corr.get("date_correction") and not override:
+                        df["report_date"] = meta_corr["date_correction"]
+                        st.caption(f"📅 Date found by Claude ({meta_corr.get('date_source','')}):"
+                                   f" **{meta_corr['date_correction']}**")
+                        meta_corr["date_correction"] = None   # already applied
+
+                    needs_review_df = diff[diff["needs_review"]] if not diff.empty else pd.DataFrame()
+                    n_corrections   = len(needs_review_df)
+                    has_meta        = bool(meta_corr.get("date_correction") or
+                                          meta_corr.get("name_correction") or meta_issues)
+
+                    if n_corrections == 0 and not has_meta:
                         st.success(f"✓ **{uf.name}** — {len(df)} tests · {name} · 🤖 all values confirmed")
                         df["llm_verified"] = True
                         save_report(df)
                     else:
                         save_report(df)
-                        save_pending_review(pid, df["report_date"].iloc[0], diff, raw_text)
+                        save_pending_review(pid, df["report_date"].iloc[0],
+                                            diff, raw_text, meta_corr)
+                        parts = []
+                        if n_corrections:
+                            parts.append(f"{n_corrections} value/unit flag(s)")
+                        if meta_issues:
+                            parts.append(f"{len(meta_issues)} metadata issue(s)")
+                        if meta_corr.get("date_correction") or meta_corr.get("name_correction"):
+                            parts.append("metadata correction(s)")
                         st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
-                        st.warning(f"🔍 **{n_corrections} value(s) need review** — see LLM Review in sidebar.")
+                        st.warning(f"🔍 **{', '.join(parts)} need review** — see LLM Review in sidebar.")
             else:
                 save_report(df)
                 st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
@@ -565,97 +620,232 @@ elif page == "Patient Profiles":
 
 elif page == "LLM Review":
     st.markdown('<div class="section-label">🔍 LLM Verification Review</div>', unsafe_allow_html=True)
-    st.markdown("Claude checked these reports and flagged potential errors or missed tests. "
-                "Review each item and **Accept** or **Reject** the suggestion.")
+    st.markdown(
+        "Claude audited each report for **missing fields**, **wrong/missing units**, "
+        "**date detection**, **out-of-range values**, and **missed tests**. "
+        "Nothing is changed automatically — every flag needs your approval."
+    )
+
+    # Legend
+    st.markdown("""
+    <div style="display:flex;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap;font-size:0.75rem;">
+      <span>🆕 <b>MISSED</b> — test found in PDF but regex skipped it</span>
+      <span>⚠️ <b>CORRECTED</b> — value or unit differs from raw text</span>
+      <span>🔴 <b>CRITICAL</b> — value in critical danger zone</span>
+      <span>📊 <b>OUT OF RANGE</b> — above or below reference range</span>
+      <span>📋 <b>METADATA</b> — missing date, name, gender, or units</span>
+      <span>❓ <b>LOW CONFIDENCE</b> — Claude unsure, needs human check</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     pending = load_pending_reviews()
     if not pending:
         st.success("✓ No pending reviews — all reports are verified.")
     else:
         for review in pending:
-            pid         = review["patient_id"]
-            report_date = review["report_date"]
-            diff_rows   = review.get("diff", [])
-            if not diff_rows:
-                continue
-
-            diff    = pd.DataFrame(diff_rows)
-            flagged = diff[diff["needs_review"] == True]
-            if flagged.empty:
-                delete_pending_review(pid, report_date)
-                continue
+            pid          = review["patient_id"]
+            report_date  = review["report_date"]
+            diff_rows    = review.get("diff", [])
+            meta_corr    = review.get("meta_corrections", {})
 
             history      = load_history(pid)
             patient_name = history["patient_name"].iloc[0] if not history.empty else pid
 
-            with st.expander(f"📋 {patient_name} · {report_date} · {len(flagged)} item(s)", expanded=True):
-                st.markdown('<div class="section-label">Flagged Values</div>', unsafe_allow_html=True)
-                accepted_keys = []
-                rejected_keys = []
+            diff    = pd.DataFrame(diff_rows) if diff_rows else pd.DataFrame()
+            flagged = diff[diff["needs_review"] == True] if not diff.empty else pd.DataFrame()
 
-                for _, row in flagged.iterrows():
-                    test     = row["test_name"]
-                    status   = row["status"]
-                    conf     = row.get("confidence", "high")
-                    note     = row.get("note", "")
-                    r_val    = row["regex_value"]
-                    r_unit   = row.get("regex_unit", "")
-                    llm_val  = row["llm_value"]
-                    llm_unit = row.get("llm_unit", "")
+            meta_issues      = meta_corr.get("metadata_issues", [])
+            date_correction  = meta_corr.get("date_correction")
+            name_correction  = meta_corr.get("name_correction")
+            has_meta_flags   = bool(meta_issues or date_correction or name_correction)
 
-                    if status == "missed_by_regex":
-                        badge = "🆕 **MISSED**"
-                        desc  = f"Claude found this test but regex missed it: **{llm_val} {llm_unit}**"
-                    elif status == "corrected":
-                        badge = "⚠️ **CORRECTED**"
-                        desc  = f"Regex: **{r_val} {r_unit}** → Claude: **{llm_val} {llm_unit}**"
-                    else:
-                        badge = "❓ **LOW CONFIDENCE**"
-                        desc  = f"Regex extracted **{r_val} {r_unit}** — Claude is unsure"
+            total_items = len(flagged) + (1 if date_correction else 0) + (1 if name_correction else 0) + len(meta_issues)
 
-                    col_info, col_accept, col_reject = st.columns([5, 1, 1])
-                    with col_info:
-                        st.markdown(f"{badge} &nbsp; **{test}**", unsafe_allow_html=True)
-                        st.caption(desc + (f"\n*Note: {note}*" if note else ""))
-                        if conf == "low":
-                            st.caption("⚠️ Claude has low confidence in this correction")
-                    widget_key = f"review_{pid}_{report_date}_{test}"
-                    with col_accept:
-                        if st.button("✓ Accept", key=f"acc_{widget_key}", type="primary"):
-                            accepted_keys.append(test)
-                    with col_reject:
-                        if st.button("✗ Reject", key=f"rej_{widget_key}"):
-                            rejected_keys.append(test)
+            if total_items == 0 and flagged.empty:
+                delete_pending_review(pid, report_date)
+                continue
 
-                st.markdown("---")
-                col_all, col_none, _ = st.columns([1.5, 1.5, 5])
-                with col_all:
-                    if st.button("✓ Accept All", key=f"acc_all_{pid}_{report_date}"):
-                        accepted_keys = flagged["test_name"].tolist()
-                with col_none:
-                    if st.button("✗ Reject All", key=f"rej_all_{pid}_{report_date}"):
-                        rejected_keys = flagged["test_name"].tolist()
+            with st.expander(
+                f"📋 {patient_name} · {report_date} · {total_items} item(s) to review",
+                expanded=True
+            ):
+                accepted_tests = []
+                rejected_tests = []
+                apply_date     = False
+                reject_date    = False
+                apply_name     = False
+                reject_name    = False
 
-                if accepted_keys or rejected_keys:
-                    if accepted_keys:
-                        current_history = load_history(pid)
-                        report_df = current_history[
-                            current_history["report_date"].dt.strftime("%Y-%m-%d") == report_date
-                        ].copy()
-                        if not report_df.empty:
-                            corrected_df = apply_corrections(report_df, diff, accepted_keys)
-                            corrected_df["report_date"] = report_date
-                            other_dates = current_history[
-                                current_history["report_date"].dt.strftime("%Y-%m-%d") != report_date
-                            ]
-                            full_df = pd.concat([other_dates, corrected_df], ignore_index=True)
-                            (STORE_DIR / f"{pid}.csv").write_text(full_df.to_csv(index=False))
-                            st.success(f"✓ Applied {len(accepted_keys)} correction(s) for {patient_name} · {report_date}")
-                    if rejected_keys:
-                        st.info(f"Rejected {len(rejected_keys)} suggestion(s) — original values kept.")
-                    remaining = [t for t in flagged["test_name"]
-                                 if t not in accepted_keys and t not in rejected_keys]
-                    if not remaining:
+                # ── SECTION 1: METADATA FLAGS ─────────────────────────────
+                if has_meta_flags:
+                    st.markdown('<div class="section-label">📋 Metadata Issues</div>',
+                                unsafe_allow_html=True)
+
+                    # Generic metadata issues (no accept/reject needed — informational)
+                    for issue in meta_issues:
+                        st.warning(f"📋 {issue}")
+
+                    # Date correction
+                    if date_correction:
+                        col_i, col_a, col_r = st.columns([5, 1, 1])
+                        with col_i:
+                            src = meta_corr.get("date_source", "report text")
+                            st.markdown("📋 **DATE CORRECTION**", unsafe_allow_html=True)
+                            st.caption(
+                                f"Regex missed the date. Claude read **{date_correction}** "
+                                f"from '{src}'. Current stored date: "
+                                f"**{report_date or '(empty)'}**"
+                            )
+                        with col_a:
+                            if st.button("✓ Accept", key=f"acc_date_{pid}_{report_date}", type="primary"):
+                                apply_date = True
+                        with col_r:
+                            if st.button("✗ Reject", key=f"rej_date_{pid}_{report_date}"):
+                                reject_date = True
+
+                    # Name correction
+                    if name_correction:
+                        col_i, col_a, col_r = st.columns([5, 1, 1])
+                        with col_i:
+                            regex_name = history["patient_name"].iloc[0] if not history.empty else "?"
+                            st.markdown("📋 **NAME CORRECTION**", unsafe_allow_html=True)
+                            st.caption(
+                                f"Stored name: **{regex_name}** → "
+                                f"Claude read: **{name_correction}**"
+                            )
+                        with col_a:
+                            if st.button("✓ Accept", key=f"acc_name_{pid}_{report_date}", type="primary"):
+                                apply_name = True
+                        with col_r:
+                            if st.button("✗ Reject", key=f"rej_name_{pid}_{report_date}"):
+                                reject_name = True
+
+                # ── SECTION 2: VALUE / UNIT / RANGE FLAGS ─────────────────
+                if not flagged.empty:
+                    st.markdown('<div class="section-label" style="margin-top:1.2rem">'
+                                'Value &amp; Range Checks</div>', unsafe_allow_html=True)
+
+                    for _, row in flagged.iterrows():
+                        test     = row["test_name"]
+                        status   = row["status"]
+                        conf     = row.get("confidence", "high")
+                        note     = row.get("note", "")
+                        r_val    = row["regex_value"]
+                        r_unit   = row.get("regex_unit", "")
+                        llm_val  = row["llm_value"]
+                        llm_unit = row.get("llm_unit", "")
+                        rflag    = row.get("range_flag", "")
+                        rnote    = row.get("range_note", "")
+                        unote    = row.get("unit_note", "")
+
+                        # Build badge + description
+                        if status == "missed_by_regex":
+                            badge = "🆕 **MISSED**"
+                            desc  = f"Not extracted by regex. Claude found: **{llm_val} {llm_unit}**"
+                        elif status == "corrected":
+                            badge = "⚠️ **CORRECTED**"
+                            desc  = f"Regex: **{r_val} {r_unit}** → Claude: **{llm_val} {llm_unit}**"
+                            if unote:
+                                desc += f" _(unit: {unote})_"
+                        else:
+                            badge = "❓ **LOW CONFIDENCE**"
+                            desc  = f"Regex: **{r_val} {r_unit}** — Claude unsure"
+
+                        # Range badge (informational — shown even when value is kept as-is)
+                        range_badge = ""
+                        if rflag == "CRITICAL_HIGH":
+                            range_badge = " 🔴 **CRITICAL HIGH**"
+                        elif rflag == "CRITICAL_LOW":
+                            range_badge = " 🔴 **CRITICAL LOW**"
+                        elif rflag == "HIGH":
+                            range_badge = " 📊 **HIGH**"
+                        elif rflag == "LOW":
+                            range_badge = " 📊 **LOW**"
+
+                        col_info, col_accept, col_reject = st.columns([5, 1, 1])
+                        with col_info:
+                            st.markdown(
+                                f"{badge}{range_badge} &nbsp; **{test}**",
+                                unsafe_allow_html=True
+                            )
+                            caption_parts = [desc]
+                            if rnote:
+                                caption_parts.append(f"Range: _{rnote}_")
+                            if note:
+                                caption_parts.append(f"Note: _{note}_")
+                            if conf == "low":
+                                caption_parts.append("⚠️ Claude has low confidence")
+                            st.caption("  \n".join(caption_parts))
+
+                        widget_key = f"review_{pid}_{report_date}_{test}"
+                        with col_accept:
+                            if st.button("✓ Accept", key=f"acc_{widget_key}", type="primary"):
+                                accepted_tests.append(test)
+                        with col_reject:
+                            if st.button("✗ Reject", key=f"rej_{widget_key}"):
+                                rejected_tests.append(test)
+
+                    # Bulk actions
+                    st.markdown("---")
+                    col_all, col_none, _ = st.columns([1.5, 1.5, 5])
+                    with col_all:
+                        if st.button("✓ Accept All", key=f"acc_all_{pid}_{report_date}"):
+                            accepted_tests = flagged["test_name"].tolist()
+                    with col_none:
+                        if st.button("✗ Reject All", key=f"rej_all_{pid}_{report_date}"):
+                            rejected_tests = flagged["test_name"].tolist()
+
+                # ── APPLY DECISIONS ────────────────────────────────────────
+                any_decision = (accepted_tests or rejected_tests or
+                                apply_date or reject_date or
+                                apply_name or reject_name)
+
+                if any_decision:
+                    current_history = load_history(pid)
+                    report_df = current_history[
+                        current_history["report_date"].dt.strftime("%Y-%m-%d") == report_date
+                    ].copy()
+
+                    # Build effective meta corrections based on user decisions
+                    effective_meta = {}
+                    if apply_date and date_correction:
+                        effective_meta["date_correction"] = date_correction
+                    if apply_name and name_correction:
+                        effective_meta["name_correction"] = name_correction
+
+                    if not report_df.empty and (accepted_tests or effective_meta):
+                        corrected_df = apply_corrections(
+                            report_df, diff, accepted_tests,
+                            meta_corrections=effective_meta if effective_meta else None
+                        )
+                        other_dates = current_history[
+                            current_history["report_date"].dt.strftime("%Y-%m-%d") != report_date
+                        ]
+                        full_df = pd.concat([other_dates, corrected_df], ignore_index=True)
+                        (STORE_DIR / f"{pid}.csv").write_text(full_df.to_csv(index=False))
+
+                        msgs = []
+                        if accepted_tests:
+                            msgs.append(f"{len(accepted_tests)} value correction(s)")
+                        if effective_meta.get("date_correction"):
+                            msgs.append(f"date → {effective_meta['date_correction']}")
+                        if effective_meta.get("name_correction"):
+                            msgs.append(f"name → {effective_meta['name_correction']}")
+                        st.success(f"✓ Applied: {', '.join(msgs)}")
+
+                    if rejected_tests:
+                        st.info(f"Rejected {len(rejected_tests)} suggestion(s) — original values kept.")
+                    if reject_date:
+                        st.info("Date correction rejected — original date kept.")
+                    if reject_name:
+                        st.info("Name correction rejected — original name kept.")
+
+                    # Check if everything is resolved
+                    remaining_tests = [t for t in flagged["test_name"]
+                                       if t not in accepted_tests and t not in rejected_tests]
+                    date_resolved  = apply_date or reject_date or not date_correction
+                    name_resolved  = apply_name or reject_name or not name_correction
+                    if not remaining_tests and date_resolved and name_resolved:
                         delete_pending_review(pid, report_date)
                         st.rerun()
 
