@@ -14,7 +14,7 @@ from lab_extractor import (
     process_pdf, save_report, load_history, generate_trends,
     get_test_timeseries, list_patients, is_duplicate_file,
     delete_patient, delete_report_by_date, rename_patient,
-    merge_into_patient, STORE_DIR
+    merge_into_patient, patch_record, STORE_DIR
 )
 from llm_verifier import (
     verify_with_llm, build_diff, apply_corrections,
@@ -222,7 +222,9 @@ def render_trend_charts(history, trends, key_prefix=""):
         ts = get_test_timeseries(history, test)
         if ts.empty or len(ts) < 2:
             continue
-        unit = ts["unit"].iloc[-1] if "unit" in ts.columns else ""
+        unit = str(ts["unit"].iloc[-1]) if "unit" in ts.columns else ""
+        if unit in ("nan", "None", "NaN"):
+            unit = ""
 
         normal_min = normal_max = short_desc = interp_summary = None
         if not biomarker_dictionary.empty and test in biomarker_dictionary.index:
@@ -608,10 +610,80 @@ elif page == "Patient Profiles":
                 show_cols = ["report_date", "test_name", "value", "unit", "status", "source_file"]
                 avail = [c for c in show_cols if c in history.columns]
                 st.dataframe(history[avail].sort_values(["report_date", "test_name"],
-                             ascending=[False, True]), width="stretch", hide_index=True)
+                             ascending=[False, True]), use_container_width=True, hide_index=True)
                 st.download_button("↓ Full History CSV",
                     data=history.to_csv(index=False).encode("utf-8"),
                     file_name=f"{safe_name(history)}_full_history.csv", mime="text/csv")
+
+                # ── Manual edit: fix any individual result ────────────────
+                st.markdown("---")
+                st.markdown('<div class="section-label">✏️ Manually Correct a Result</div>',
+                            unsafe_allow_html=True)
+                st.caption(
+                    "Use this when both regex and Claude got a value wrong or uncertain. "
+                    "Pick the report date and test, enter the correct value and unit, "
+                    "and the status will be re-flagged automatically."
+                )
+
+                edit_col1, edit_col2 = st.columns(2)
+                with edit_col1:
+                    edit_date = st.selectbox(
+                        "Report date",
+                        options=report_dates,
+                        key=f"edit_date_{selected_pid}"
+                    )
+                with edit_col2:
+                    date_tests = sorted(
+                        history[
+                            history["report_date"].dt.strftime("%Y-%m-%d") == edit_date
+                        ]["test_name"].unique().tolist()
+                    )
+                    edit_test = st.selectbox(
+                        "Test to correct",
+                        options=date_tests,
+                        key=f"edit_test_{selected_pid}"
+                    )
+
+                # Pre-fill current stored value and unit
+                current_row = history[
+                    (history["report_date"].dt.strftime("%Y-%m-%d") == edit_date) &
+                    (history["test_name"] == edit_test)
+                ]
+                cur_val  = float(current_row["value"].iloc[0])  if not current_row.empty else 0.0
+                cur_unit = str(current_row["unit"].iloc[0])      if not current_row.empty else ""
+                cur_stat = str(current_row["status"].iloc[0])    if not current_row.empty else ""
+                if cur_unit in ("nan", "None"):
+                    cur_unit = ""
+
+                val_col, unit_col, btn_col = st.columns([2, 2, 1])
+                with val_col:
+                    new_val = st.number_input(
+                        f"Correct value  (current: {cur_val})",
+                        value=cur_val,
+                        format="%.4f",
+                        key=f"edit_val_{selected_pid}_{edit_date}_{edit_test}"
+                    )
+                with unit_col:
+                    new_unit = st.text_input(
+                        f"Correct unit  (current: {cur_unit or '—'})",
+                        value=cur_unit,
+                        key=f"edit_unit_{selected_pid}_{edit_date}_{edit_test}"
+                    )
+                with btn_col:
+                    st.markdown("<div style='margin-top:1.75rem'></div>", unsafe_allow_html=True)
+                    if st.button("💾 Save", key=f"edit_save_{selected_pid}_{edit_date}_{edit_test}"):
+                        if abs(new_val - cur_val) > 0.0001 or new_unit.strip() != cur_unit.strip():
+                            ok = patch_record(
+                                selected_pid, edit_date, edit_test,
+                                new_value=new_val, new_unit=new_unit.strip()
+                            )
+                            if ok:
+                                st.success(f"✓ Saved: **{edit_test}** = {new_val} {new_unit.strip()}")
+                                st.rerun()
+                            else:
+                                st.error("Could not find that record to update.")
+                        else:
+                            st.info("No change detected.")
 
 
 # ═══════════════════════════════════════════════

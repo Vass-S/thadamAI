@@ -983,6 +983,52 @@ def get_test_timeseries(history: pd.DataFrame, test_name: str) -> pd.DataFrame:
 # PATIENT LIST
 # ─────────────────────────────────────────────
 
+def patch_record(patient_id: str, report_date: str,
+                 test_name: str, new_value: float,
+                 new_unit: str, new_status: str = "") -> bool:
+    """
+    Manually overwrite a single test result row (value, unit, status).
+    Used when both regex and LLM are wrong/uncertain and the user
+    wants to type in the correct value directly.
+
+    Args:
+        patient_id:  The patient's ID (CSV filename stem)
+        report_date: Date string "YYYY-MM-DD" identifying which report
+        test_name:   Canonical test name to patch
+        new_value:   Corrected numeric value
+        new_unit:    Corrected unit string
+        new_status:  Optional — if blank, status is re-flagged automatically
+
+    Returns True on success, False if record not found.
+    """
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return False
+
+    df = pd.read_csv(path)
+    mask = (
+        (df["report_date"].astype(str).str[:10] == str(report_date)[:10]) &
+        (df["test_name"] == test_name)
+    )
+    if not mask.any():
+        return False
+
+    df.loc[mask, "value"]          = float(new_value)
+    df.loc[mask, "unit"]           = str(new_unit)
+    df.loc[mask, "llm_verified"]   = True
+    df.loc[mask, "llm_corrected"]  = True
+
+    # Re-flag status automatically unless caller provided one
+    if new_status:
+        df.loc[mask, "status"] = new_status
+    else:
+        gender = str(df["gender"].iloc[0]).upper() if "gender" in df.columns else ""
+        df.loc[mask, "status"] = flag_status(test_name, float(new_value), str(new_unit), gender)
+
+    df.to_csv(path, index=False)
+    return True
+
+
 def list_patients():
     records = []
     for csv_file in STORE_DIR.glob("*.csv"):
