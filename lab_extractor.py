@@ -1,801 +1,957 @@
-
 """
-Longitudinal Biomarker Intelligence Platform
-Streamlit Web App
+Longitudinal Biomarker Intelligence Platform v4
+Robust extraction + longitudinal trends + patient profiles
 """
 
-import tempfile
-from pathlib import Path
-
+import re
+import hashlib
+import pdfplumber
 import pandas as pd
-import streamlit as st
-import plotly.graph_objects as go
+from pathlib import Path
+from datetime import datetime
 
-from lab_extractor import (
-    process_pdf, save_report, load_history, generate_trends,
-    get_test_timeseries, list_patients, is_duplicate_file,
-    delete_patient, delete_report_by_date, rename_patient,
-    merge_into_patient, STORE_DIR
+BASE_DIR    = Path(__file__).parent
+DATA_DIR    = BASE_DIR / "data"
+STORE_DIR   = DATA_DIR / "patient_profiles"
+DICT_PATH   = DATA_DIR / "Biomarker_dictionary_csv.csv"
+STORE_DIR.mkdir(parents=True, exist_ok=True)
+
+EXTRA_ALIASES = {
+    # Vitamins & minerals
+    "Vitamin B12":          ["vitamin b 12", "vitamin b12"],
+    "Vitamin D (25-OH)":    ["vitamin d (25-oh)", "25 hydroxy (oh) vit d", "25-oh vitamin d",
+                             "vitamin d", "25 oh vitamin d"],
+    "Folic Acid":           ["folic acid", "folate", "folic acid (serum)"],
+    "Copper":               ["copper"],
+
+    # Metabolic / renal
+    "Urea (Serum)":         ["urea - serum", "urea"],
+    "Creatinine (Serum)":   ["creatinine - serum", "creatinine"],
+    "Glucose (Fasting)":    ["glucose (fasting)", "glucose fasting (plasma-f,hexokinase)",
+                             "glucose fasting"],
+    "HbA1c":                ["hb a1c", "hba1c- glycated haemoglobin",
+                             "hba1c- glycated haemoglobin (hplc)", "glycated haemoglobin",
+                             "hba1c- glycated haemoglobin, blood by hplc method"],
+
+    # Hormones - androgens
+    "Testosterone (Total)": ["testosterone (total)", "testosterone"],
+    "DHEA Sulphate":        ["dhea sulphate"],
+
+    # Hormones - thyroid
+    "TSH":                  ["tsh 3rd generation (hs tsh)", "tsh (hs tsh)", "hs tsh",
+                             "tsh 3rd generation", "tsh- 3rd generation (hs tsh)"],
+    "Free T3":              ["free t3", "free t 3", "ft3", "free  t3"],
+    "Free T4":              ["free t4", "free t 4", "ft4", "free  t4"],
+
+    # Hormones - pituitary / reproductive
+    "LH":                   ["lh", "luteinizing hormone"],
+    "FSH":                  ["fsh", "follicle stimulating hormone"],
+    "Prolactin":            ["prolactin"],
+    "Estradiol":            ["estradiol", "oestradiol", "e2"],
+    "Progesterone":         ["progesterone"],
+
+    # Hormones - adrenal / growth
+    "Cortisol (AM)":        ["cortisol ( am)", "cortisol (am)", "cortisol"],
+    "IGF-I":                ["igf - i", "igf i", "igf-1", "igf1"],
+
+    # Liver
+    "AST (SGOT)":           ["s.g.o.t. (ast)", "sgot (ast)", "sgot"],
+    "ALT (SGPT)":           ["s.g.p.t. (alt)", "sgpt (alt)", "sgpt"],
+    "Gamma GT":             ["gamma gt ( ggtp)", "gamma gt (ggtp)", "ggt"],
+    "Bilirubin (Total)":    ["bilirubin - total", "bilirubin total"],
+    "Bilirubin (Direct)":   ["bilirubin - direct", "bilirubin direct"],
+    "Bilirubin (Indirect)": ["bilirubin - indirect", "bilirubin indirect"],
+    "Total Protein":        ["total proteins", "total protein"],
+
+    # Lipids
+    "APO Lipoprotein A1":   ["apo lipoprotein a1"],
+    "APO Lipoprotein B":    ["apo lipoprotein b", "apolipoproteins b"],
+    "Lipoprotein(a)":       ["lipoprotein a ( lp a)", "lipoprotein(a)"],
+
+    # Ratios
+    "LDL/HDL Ratio":        ["ldl/hdl ratio", "ldl hdl ratio"],
+    "CHOL/HDL Ratio":       ["chol/hdl ratio", "chol hdl ratio"],
+
+    # Glucose (post prandial)
+    "Glucose (Post Prandial)": ["glucose-post prandial(2hrs)", "glucose post prandial(2hrs)",
+                                "glucose post prandial", "glucose-post prandial"],
+
+    # Apolipoproteins
+    "APO Lipoprotein E":    ["apolipoproteins e", "apolipoprotein e", "apo lipoprotein e"],
+
+    # ── Haematology (Full Blood Count) ──────────────────────────────
+    "Haemoglobin":          ["haemoglobin", "hemoglobin", "hgb", "hb"],
+    "Haematocrit":          ["haematocrit", "hematocrit", "hct",
+                             "packed cell volume", "pcv"],
+    "Total RBC Count":      ["total rbc count", "rbc count", "red blood cell count",
+                             "red cell count", "rbc"],
+    "MCV":                  ["mean corpuscular volume", "mcv",
+                             "mean corpuscular volume (mcv)"],
+    "MCH":                  ["mean corpuscular haemoglobin", "mch",
+                             "(mch) mean corpuscular haemoglobin",
+                             "mean corpuscular hemoglobin",
+                             "mch (mean corpuscular haemoglobin)"],
+    "MCHC":                 ["mean corpuscular haemoglobin concentration", "mchc",
+                             "(mchc) mean corpuscular haemoglobin",
+                             "mean corpuscular hemoglobin concentration",
+                             "mchc (mean corpuscular haemoglobin concentration)"],
+    "RDW-CV":               ["rdw - cv", "rdw-cv", "rdw cv", "rdw",
+                             "red cell distribution width"],
+    "Total WBC Count":      ["total wbc count", "wbc count", "white blood cell count",
+                             "total leucocyte count", "tlc", "wbc",
+                             "white cell count"],
+    "Neutrophil":           ["neutrophil", "neutrophils", "neutrophil %",
+                             "neutrophil count %"],
+    "Lymphocyte":           ["lymphocyte", "lymphocytes", "lymphocyte %",
+                             "lymphocyte count %"],
+    "Monocyte":             ["monocyte", "monocytes", "monocyte %",
+                             "monocyte count %"],
+    "Eosinophil":           ["eosinophil", "eosinophils", "eosinophil %",
+                             "eosinophil count %"],
+    "Basophil":             ["basophil", "basophils", "basophil %",
+                             "basophil count %"],
+    "Absolute Neutrophil Count": ["absolute neutrophil count",
+                                  "absolute neutrophil count (anc)", "anc"],
+    "Absolute Lymphocyte Count": ["absolute lymphocyte count",
+                                  "absolute lymphocyte count (alc)", "alc"],
+    "Absolute Monocyte Count":   ["absolute monocyte count",
+                                  "absolute monocyte count (amc)", "amc"],
+    "Absolute Eosinophil Count": ["absolute eosinophil count",
+                                  "absolute eosinophil count (aec)", "aec"],
+    "Absolute Basophil Count":   ["absolute basophil count",
+                                  "absolute basophil count (abc)", "abc"],
+    "Platelet Count":       ["platelet count", "platelets", "plt",
+                             "thrombocyte count"],
+
+    # ── Inflammation / Infection ─────────────────────────────────────
+    "C Reactive Protein":   ["c reactive protein", "crp", "c-reactive protein",
+                             "hs crp", "high sensitivity crp", "hscrp",
+                             "c reactive protein (crp)",
+                             "reactive protein (crp)",   # OCR drops leading 'C'
+                             "reactive protein"],
+    "Dengue NS1 Antigen":   ["dengue ns1 antigen", "dengue ns1", "ns1 antigen",
+                             "dengue ns1 ag"],
+}
+
+UNIT_CONVERSIONS = {
+    ("ng/ml", "ng/dl"): 10.0,
+    ("ng/dl", "ng/ml"): 0.1,
+    ("µg/dl", "µg/ml"): 0.01,
+    ("µg/ml", "µg/dl"): 100.0,
+}
+
+_UNIT_MAP = {
+    # concentration
+    "mg/dl": "mg/dL", "mg/l": "mg/L", "mg/ml": "mg/mL",   # mg/L used by CRP
+    "pg/ml": "pg/mL", "pg/dl": "pg/dL",
+    "ng/ml": "ng/mL", "ng/dl": "ng/dL",
+    "ug/dl": "µg/dL", "ug/ml": "µg/mL",
+    "microgm/dl": "µg/dL", "microgm/ml": "µg/mL",
+    # enzyme / activity
+    "u/l": "U/L", "iu/l": "IU/L",
+    "miu/l": "mIU/L", "miu/ml": "mIU/mL",
+    "uiu/ml": "µIU/mL", "uiu/l": "µIU/L",
+    # weight / protein
+    "gm/dl": "g/dL", "g/dl": "g/dL", "g/l": "g/L",
+    # serology
+    "mu/100ul": "mU/100uL", "mu/ml": "mU/mL",
+    # haematology
+    "fl": "fL",                            # MCV
+    "pg": "pg",                            # MCH
+    "cells/ul": "cells/µL",               # counts
+    "cells/µl": "cells/µL",
+    "/ul": "cells/µL", "/µl": "cells/µL",
+    "million/ul": "million/µL",            # RBC
+    "million/µl": "million/µL",
+    "10^3/ul": "10³/µL",                  # Kauvery WBC / platelet / absolute counts
+    "10^6/ul": "10⁶/µL",                  # Kauvery RBC
+    "lakhs/cumm": "cells/µL",             # Indian lab alternate unit (1 lakh = 100,000)
+    "cumm": "cells/µL",                   # cells per cubic mm = cells/µL
+    # misc
+    "%": "%",
+}
+
+# Regex fragment that matches any known unit (used in find_value_in_text)
+_UNIT_RE = (
+    r'(mg\/dl|mg\/l|mg\/ml'               # mg/dL (glucose etc), mg/L (CRP), mg/mL
+    r'|pg\/ml|pg\/dl|ng\/ml|ng\/dl'
+    r'|ug\/dl|microgm\/dl|microgm\/ml'
+    r'|u\/l|iu\/l|miu\/l|miu\/ml|uiu\/ml|\xb5iu\/ml|\xb5iu\/l'
+    r'|gm\/dl|g\/dl|g\/l|mu\/100ul|mu\/ml'
+    r'|fl|cells\/ul|cells\/\xb5l|\/ul|\/\xb5l'
+    r'|10\^3\/ul|10\^6\/ul'               # normalised Kauvery count units
+    r'|million\/ul|million\/\xb5l|lakhs\/cumm|cumm|%)'
 )
-from llm_verifier import (
-    verify_with_llm, build_diff, apply_corrections,
-    save_pending_review, load_pending_reviews, delete_pending_review
-)
 
-# ─────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────
-st.set_page_config(
-    page_title="Biomarker Intelligence Platform",
-    page_icon="🧬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ─────────────────────────────────────────────
-# CUSTOM CSS
-# ─────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url(\'https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap\');
-
-:root {
-    --bg:      #0a0d12;
-    --surface: #111620;
-    --border:  #1e2635;
-    --accent:  #00e5c3;
-    --high:    #ff6b6b;
-    --low:     #ffd166;
-    --text:    #d4dbe8;
-    --muted:   #5c6a80;
-}
-html, body, [class*="css"] {
-    background-color: var(--bg) !important;
-    color: var(--text) !important;
-    font-family: \'DM Mono\', monospace !important;
-}
-section[data-testid="stSidebar"] {
-    background-color: var(--surface) !important;
-    border-right: 1px solid var(--border) !important;
-}
-section[data-testid="stSidebar"] * { color: var(--text) !important; }
-
-.bip-header {
-    display: flex; align-items: baseline; gap: 12px;
-    margin-bottom: 2rem; padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-}
-.bip-header h1 {
-    font-family: \'Syne\', sans-serif !important;
-    font-weight: 800 !important; font-size: 2rem !important;
-    color: #fff !important; margin: 0 !important;
-}
-.bip-header span { font-size: 0.75rem; color: var(--accent); letter-spacing: 3px; text-transform: uppercase; }
-
-.section-label {
-    font-family: \'Syne\', sans-serif; font-size: 0.65rem;
-    letter-spacing: 4px; text-transform: uppercase;
-    color: var(--muted); margin-bottom: 0.75rem; margin-top: 1.5rem;
-}
-.patient-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-left: 3px solid var(--accent); padding: 1.2rem 1.5rem;
-    border-radius: 4px; margin-bottom: 1.5rem;
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;
-}
-.patient-card .field label { font-size: 0.6rem; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); display: block; }
-.patient-card .field value { font-family: \'Syne\', sans-serif; font-size: 1.1rem; font-weight: 700; color: #fff; }
-
-.summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
-.summary-card { background: var(--surface); border: 1px solid var(--border); padding: 1rem 1.25rem; border-radius: 4px; text-align: center; }
-.summary-card .num { font-family: \'Syne\', sans-serif; font-size: 2rem; font-weight: 800; line-height: 1; }
-.summary-card .lbl { font-size: 0.6rem; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
-
-.stButton > button {
-    background: transparent !important; border: 1px solid var(--accent) !important;
-    color: var(--accent) !important; font-family: \'DM Mono\', monospace !important;
-    font-size: 0.75rem !important; letter-spacing: 2px !important;
-    text-transform: uppercase !important; border-radius: 2px !important;
-    padding: 0.4rem 1.2rem !important; transition: all 0.2s ease !important;
-}
-.stButton > button:hover { background: var(--accent) !important; color: #000 !important; }
-
-/* Red delete button override */
-.delete-btn > button {
-    border-color: var(--high) !important; color: var(--high) !important;
-}
-.delete-btn > button:hover { background: var(--high) !important; color: #fff !important; }
-
-.stTabs [data-baseweb="tab-list"] { border-bottom: 1px solid var(--border) !important; gap: 0; }
-.stTabs [data-baseweb="tab"] {
-    background: transparent !important; border-radius: 0 !important;
-    color: var(--muted) !important; font-family: \'DM Mono\', monospace !important;
-    font-size: 0.72rem !important; letter-spacing: 2px !important;
-    text-transform: uppercase !important; padding: 0.5rem 1.5rem !important;
-    border-bottom: 2px solid transparent !important;
-}
-.stTabs [aria-selected="true"] { color: var(--accent) !important; border-bottom: 2px solid var(--accent) !important; }
-
-.stFileUploader > div { background: var(--surface) !important; border: 1px dashed var(--border) !important; border-radius: 4px !important; }
-.stAlert { border-radius: 4px !important; }
-.stDataFrame { border: 1px solid var(--border) !important; border-radius: 4px; }
-.stSelectbox > div > div { background: var(--surface) !important; border: 1px solid var(--border) !important; color: var(--text) !important; border-radius: 4px !important; }
-.stDownloadButton > button { background: transparent !important; border: 1px solid var(--muted) !important; color: var(--muted) !important; font-family: \'DM Mono\', monospace !important; font-size: 0.7rem !important; border-radius: 2px !important; }
-.streamlit-expanderHeader { background: var(--surface) !important; border: 1px solid var(--border) !important; border-radius: 4px !important; }
-
-/* Chart background */
-.stPlotlyChart { border: 1px solid var(--border); border-radius: 4px; }
-
-#MainMenu, footer, .stDeployButton { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
+_DATE_FMTS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"]
 
 
 # ─────────────────────────────────────────────
-# BIOMARKER DICTIONARY LOADING AND HELPERS
+# DICTIONARY
 # ─────────────────────────────────────────────
 
-@st.cache_data
-def load_biomarker_dictionary():
-    try:
-        df = pd.read_csv("Biomarker_dictionary_csv.csv")
-        # Pre-parse ranges for efficiency
-        df[["normal_min", "normal_max"]] = df["normal_range"].apply(lambda x: pd.Series(parse_range(x)))
-        df[["optimal_min", "optimal_max"]] = df["optimal_range"].apply(lambda x: pd.Series(parse_range(x)))
-        df[["high_risk_min", "high_risk_max"]] = df["high_risk_range"].apply(lambda x: pd.Series(parse_range(x)))
-        df[["diseased_min", "diseased_max"]] = df["diseased_range"].apply(lambda x: pd.Series(parse_range(x)))
-        return df.set_index("canonical_name")
-    except FileNotFoundError:
-        st.error("Biomarker_dictionary_csv.csv not found. Please ensure it\'s in the same directory as app.py.")
-        return pd.DataFrame()
+def load_dictionary(path):
+    """
+    Load biomarker definitions from CSV.
 
-def parse_range(range_str):
-    if pd.isna(range_str): return None, None
-    range_str = str(range_str).strip()
-    
-    # Handle specific cases like \'<40\' or \'>=126\'
-    if range_str.startswith("<="):
-        return None, float(range_str[2:])
-    elif range_str.startswith("<"):
-        return None, float(range_str[1:])
-    elif range_str.startswith(">="):
-        return float(range_str[2:]), None
-    elif range_str.startswith(">"):
-        return float(range_str[1:]), None
-    elif "–" in range_str: # Handle en-dash
-        parts = range_str.split("–")
-        return float(parts[0]), float(parts[1])
-    elif "-" in range_str: # Handle hyphen
-        parts = range_str.split("-")
-        return float(parts[0]), float(parts[1])
-    
-    try:
-        # Try to parse as a single number if no range operators
-        return float(range_str), float(range_str)
-    except ValueError:
+    CSV columns (all required):
+      canonical_name  – display name used throughout the app  (e.g. "Haemoglobin")
+      unit            – canonical unit                        (e.g. "g/dL")
+      sex             – "male" | "female" | "both"
+      normal_range    – "low-high" or "Negative" etc.        (e.g. "13-17")
+      aliases         – comma-separated search strings        (e.g. "hb,hgb,hemoglobin")
+
+    One canonical_name may have multiple rows (one per sex). 
+    The aliases column replaces the hard-coded EXTRA_ALIASES dict — just add
+    aliases directly in the CSV. EXTRA_ALIASES in code acts as a fallback only
+    for tests not yet in the CSV.
+    """
+    df = pd.read_csv(path, encoding="latin1")
+    biomarkers = {}
+    alias_map  = {}
+
+    # Guard: check required columns exist before iterating
+    required_cols = {"canonical_name", "unit", "sex", "normal_range", "aliases"}
+    missing_cols  = required_cols - set(df.columns)
+    if missing_cols:
+        raise ValueError(
+            f"Biomarker CSV is missing columns: {missing_cols}. "
+            f"Found: {list(df.columns)}. "
+            f"Check the CSV header row is intact and not shifted."
+        )
+
+    import warnings
+    for row_num, (_, row) in enumerate(df.iterrows(), start=2):  # start=2: row 1 = header
+        # Skip blank rows silently — common artifact of Excel editing
+        if pd.isna(row["canonical_name"]) or str(row["canonical_name"]).strip() == "":
+            continue
+        try:
+            canonical = str(row["canonical_name"]).strip()
+            if canonical not in biomarkers:
+                biomarkers[canonical] = {"unit": str(row["unit"]).strip(), "sex_rows": []}
+            biomarkers[canonical]["sex_rows"].append({
+                "sex":          str(row["sex"]).strip().lower(),
+                "normal_range": str(row["normal_range"]).strip(),
+            })
+            # CSV aliases take priority — process them first
+            if pd.notna(row["aliases"]) and str(row["aliases"]).strip():
+                for alias in str(row["aliases"]).split(","):
+                    a = alias.strip().lower()
+                    if a and a not in alias_map:
+                        alias_map[a] = canonical
+        except Exception as e:
+            # Log the bad row but keep going — don't crash the whole app
+            warnings.warn(f"Skipping CSV row {row_num} ('{row.get('canonical_name', '?')}\'): {e}")
+
+    # EXTRA_ALIASES in code = fallback for tests not yet in CSV
+    for canonical, aliases in EXTRA_ALIASES.items():
+        if canonical not in biomarkers:
+            # Test not in CSV at all — register a minimal entry so it can be flagged
+            biomarkers[canonical] = {"unit": "", "sex_rows": [{"sex": "both", "normal_range": ""}]}
+        for alias in aliases:
+            a = alias.strip().lower()
+            if a not in alias_map:          # CSV wins; code fallback fills gaps
+                alias_map[a] = canonical
+
+    all_aliases = sorted(alias_map.keys(), key=len, reverse=True)
+    return biomarkers, alias_map, all_aliases
+
+
+BIOMARKERS, _ALIAS_MAP, _ALL_ALIASES = load_dictionary(DICT_PATH)
+
+
+# ─────────────────────────────────────────────
+# STATUS FLAGGING
+# ─────────────────────────────────────────────
+
+def _parse_range(s):
+    s = str(s).strip()
+    if not s or s == "nan":
         return None, None
+    m = re.match(r'^(\d+\.?\d*)\s*-\s*(\d+\.?\d*)$', s)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    if s.startswith(">="): return float(s[2:]), None
+    if s.startswith("<="): return None,         float(s[2:])
+    if s.startswith(">"):  return float(s[1:]), None
+    if s.startswith("<"):  return None,         float(s[1:])
+    return None, None
 
-biomarker_dictionary = load_biomarker_dictionary()
+
+def _convert_value(value, from_unit, to_unit):
+    key = (from_unit.lower(), to_unit.lower())
+    factor = UNIT_CONVERSIONS.get(key)
+    return value * factor if factor else value
+
+
+def flag_status(canonical, value, extracted_unit, gender=""):
+    bm = BIOMARKERS.get(canonical)
+    if not bm:
+        return "—"
+    g = gender.upper()
+    matched = None
+    for sr in bm["sex_rows"]:
+        if sr["sex"] == "both":
+            matched = sr
+        elif (sr["sex"] == "male" and g == "M") or (sr["sex"] == "female" and g == "F"):
+            matched = sr
+            break
+    if not matched:
+        return "—"
+    ref_unit      = bm["unit"]
+    compare_value = _convert_value(value, extracted_unit, ref_unit)
+    low, high     = _parse_range(matched["normal_range"])
+    if low  is not None and compare_value < low:  return "LOW ⬇"
+    if high is not None and compare_value > high: return "HIGH ⬆"
+    return "Normal"
+
+
+def normalize_unit(unit):
+    return _UNIT_MAP.get(str(unit).strip().lower(), str(unit).strip())
+
 
 # ─────────────────────────────────────────────
-# HELPERS
+# METADATA
 # ─────────────────────────────────────────────
 
-def safe_name(history: pd.DataFrame) -> str:
-    n = history["patient_name"].iloc[0]
-    return str(n).replace(" ", "_") if pd.notna(n) else "patient"
-
-
-def render_patient_card(history: pd.DataFrame):
-    name   = history["patient_name"].iloc[0]
-    gender = history["gender"].iloc[0]
-    # Current age (computed from birth_year) — fallback to age_at_test
-    age_col = "current_age" if "current_age" in history.columns else "age_at_test"
-    if age_col not in history.columns:
-        age_col = "age"  # legacy column name
-    age_val = history[age_col].dropna()
-    age_display = f"{int(age_val.iloc[0])} (today)" if not age_val.empty else "—"
-    dates  = history["report_date"].dropna()
-    n      = len(dates.dt.strftime("%Y-%m-%d").unique()) if not dates.empty else 0
-    st.markdown(f"""
-    <div class="patient-card">
-        <div class="field"><label>Patient Name</label><value>{name}</value></div>
-        <div class="field"><label>Gender</label><value>{"Male" if str(gender).upper()=="M" else "Female"}</value></div>
-        <div class="field"><label>Current Age</label><value>{age_display}</value></div>
-        <div class="field"><label>Reports on File</label><value>{n}</value></div>
-    </div>""", unsafe_allow_html=True)
-
-
-def render_summary_cards(snapshot: pd.DataFrame):
-    total    = len(snapshot)
-    abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
-    normal   = total - abnormal
-    st.markdown(f"""
-    <div class="summary-grid">
-        <div class="summary-card"><div class="num" style="color:#fff">{total}</div><div class="lbl">Tests Tracked</div></div>
-        <div class="summary-card"><div class="num" style="color:var(--accent)">{normal}</div><div class="lbl">Within Range</div></div>
-        <div class="summary-card"><div class="num" style="color:var(--high)">{abnormal}</div><div class="lbl">Out of Range</div></div>
-    </div>""", unsafe_allow_html=True)
-
-
-def render_results_table(snapshot: pd.DataFrame):
-    df = snapshot.copy()
-    df["_sort"] = df["status"].apply(lambda s: 0 if ("HIGH" in str(s) or "LOW" in str(s)) else 1)
-    df = df.sort_values(["_sort", "test_name"]).drop(columns=["_sort"])
-    df["unit"] = df["unit"].astype(str).str.replace("Âµ", "µ", regex=False)
-    
-    # Color-code status column using st.column_config
-    st.dataframe(
-        df[["test_name", "value", "unit", "status"]],
-        width=\'stretch\',
-        hide_index=True,
-        column_config={
-            "status": st.column_config.Column(
-                "Status",
-                help="Biomarker status relative to normal range",
-                width="small",
-                # Note: Direct cell-based color-coding in st.column_config is not natively supported.
-                # A common workaround is to use HTML/CSS within st.markdown or a custom component.
-                # For now, we rely on existing CSS classes if applicable, or simple text.
-            )
-        }
-    )
-
-
-def render_trends_table(trends: pd.DataFrame):
-    """Show trends table with date columns instead of first/latest labels."""
-    df = trends.copy()
-    df["unit"] = df["unit"].astype(str).str.replace("Âµ", "µ", regex=False)
-    # Rename columns to show actual dates
-    df = df.rename(columns={
-        "first_date":    "From",
-        "first_value":   "Value (From)",
-        "latest_date":   "To",
-        "latest_value":  "Value (To)",
-        "change_%":      "Δ %",
-        "trend":         "Dir",
-        "latest_status": "Status",
-        "n_reports":     "Reports",
-    })
-    cols = ["test_name", "From", "Value (From)", "To", "Value (To)", "unit", "Δ %", "Dir", "Status", "Reports"]
-    available = [c for c in cols if c in df.columns]
-    st.dataframe(df[available], width=\'stretch\', hide_index=True)
-
-
-def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefix: str):
-    st.markdown(\'<div class="section-label">Trends Over Time</div>\', unsafe_allow_html=True)
-    render_trends_table(trends)
-    st.markdown("---")
-    render_trend_charts(history, trends)
-
-
-def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame):
+def _clean_name_raw(raw: str) -> str:
     """
-    Multi-select test picker → one line chart per selected test.
-    Uses Plotly for styled charts matching the dark theme.
+    Strip patient-ID tokens and OCR title artifacts from a raw name string.
+    Handles: 'My, SRINIWAS SRIRAM' (OCR reads Mr. as My,),
+             'P0011168 Mrs. BEVERLEY BARNES', 'Mr. VIJEY KUMAR KB', etc.
     """
-    # import plotly.graph_objects as go # Already imported at the top
+    s = raw.strip()
+    # 1. Strip patient ID tokens: letter followed by digits (P0011168, POO11168)
+    s = re.sub(r'\b[A-Za-z][A-Za-z0-9]*\d+[A-Za-z0-9]*\b\s*', '', s).strip()
+    # 2. Strip leading title artifacts: Mr. Mrs. Ms. Dr. My, (OCR misspellings of Mr.)
+    s = re.sub(r'^(?:Mr|Mrs|Ms|Dr|My|M[a-z])[\.,\s]+', '', s, flags=re.I).strip()
+    # 3. Strip any remaining leading punctuation
+    s = re.sub(r'^[,.\s]+', '', s).strip()
+    return s.upper()
 
-    test_names = sorted(trends["test_name"].tolist())
-    if not test_names:
-        return
 
-    selected = st.multiselect(
-        "Select tests to chart",
-        options=test_names,
-        default=test_names[:min(3, len(test_names))],
-        key="trend_chart_selector"
+def extract_metadata(text):
+    meta = {"name": "", "gender": "", "date": "", "age": None, "phone": ""}
+
+    # ── Format 1: Old Hitech ─────────────────────────────────────────
+    # 'Patient : P0011168 Mr. SRINIWAS SRIRAM (34/M)' or
+    # 'Patient : POO11168 My, SRINIWAS SRIRAM (34/M)'  ← OCR artifact
+    m = re.search(
+        r"Patient\s*[:\-]\s*(.+?)\s*\((\d+)\s*/\s*([MF])\)",
+        text, re.I
     )
+    if m:
+        meta["name"]   = _clean_name_raw(m.group(1))
+        meta["age"]    = int(m.group(2))
+        meta["gender"] = m.group(3).upper()
 
-    if not selected:
-        st.info("Select one or more tests above to see their trend charts.")
-        return
+    # ── Format 2: Kauvery Hospital ───────────────────────────────────
+    # 'Patient Name : Mr. Vijey Kumar KB'
+    # 'Age / Gender : 39/Years/Male'
+    if not meta["name"]:
+        m = re.search(
+            r"Patient\s+Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w\s]+?)\s*"
+            r"(?:Order|Collected|Report\s+Date|\n|$)",
+            text, re.I
+        )
+        if m:
+            meta["name"] = m.group(1).strip().upper()
+    if not meta["age"] or not meta["gender"]:
+        m = re.search(r"Age\s*/\s*Gender\s*[:\-]\s*(\d+)\s*/\s*Years?\s*/\s*(Male|Female)", text, re.I)
+        if m:
+            if not meta["age"]:    meta["age"]    = int(m.group(1))
+            if not meta["gender"]: meta["gender"] = "M" if "male" in m.group(2).lower() else "F"
 
-    for test in selected:
-        ts = get_test_timeseries(history, test)
-        if ts.empty or len(ts) < 2:
+    # ── Format 3: New Hitech / Metropolis ────────────────────────────
+    # 'Mrs. BAVERLEY B  Reference: SELF  VID: ...'
+    # 'Age: 36 Year(s)  Sex: Female'
+    if not meta["name"]:
+        m = re.search(r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w]+(?:\s+[\w]+)*)\s*(?:Reference|VID|\n|$)", text, re.I)
+        if m:
+            meta["name"] = m.group(1).strip().upper()
+    if not meta["age"]:
+        m = re.search(r"Age\s*[:\-]?\s*(\d+)", text, re.I)
+        if m: meta["age"] = int(m.group(1))
+    if not meta["gender"]:
+        m = re.search(r"Sex\s*[:\-]\s*(Male|Female)", text, re.I)
+        if m: meta["gender"] = "M" if m.group(1).upper() == "MALE" else "F"
+
+    # ── Date ─────────────────────────────────────────────────────────
+    for pattern in [
+        r"(?:Report\s+Date|Reported\s+On|Collected\s+Date|Collected\s+On|Collection\s+Date)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
+        r"SID\s+Date\s*\S?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})",
+        r"(\d{2}[\/\-]\d{2}[\/\-]\d{4})",
+    ]:
+        m = re.search(pattern, text, re.I)
+        if m:
+            for fmt in _DATE_FMTS:
+                try:
+                    meta["date"] = datetime.strptime(m.group(1), fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    continue
+            if meta["date"]:
+                break
+
+    # ── Phone ─────────────────────────────────────────────────────────
+    # 'TelNo' handles OCR merging of Tel+No without space
+    m = re.search(r"(?:Tel\s*No|TelNo|Ph|Phone|Mobile)\s*(?:No\.?)?\s*[:\-]?\s*\+?\s*(\d{10})\b", text, re.I)
+    if m:
+        meta["phone"] = m.group(1)
+
+    return meta
+
+
+def _clean_name(name: str) -> str:
+    name = re.sub(r'\b(Mr|Mrs|Ms|Dr|Miss)\.?\s*', '', name, flags=re.I)
+    name = re.sub(r'\b[A-Z]\d+\b', '', name)
+    return re.sub(r'\s+', ' ', name).strip().upper()
+
+
+def make_patient_id(meta: dict) -> str:
+    """
+    Tier 1 — Full name (2+ real words) + gender.
+               Always deterministic; no profile scan needed.
+               e.g. 'SRINIWAS SRIRAM M' → stable hash.
+
+    Tier 2 — Truncated name (1 real word) + phone + gender.
+               Before hashing, scan existing profiles to see if a
+               Tier-1 record already exists for the same first-name
+               prefix + phone + gender.  If yes, reuse that PID so
+               both reports land in the same longitudinal profile.
+
+    Tier 3 — First name + gender + age-decade (no phone).
+               Same profile scan as Tier 2.
+    """
+    gender = meta.get("gender", "").upper()
+    name   = _clean_name(meta.get("name", ""))
+    phone  = re.sub(r"\D", "", meta.get("phone", ""))[-10:]
+    age    = meta.get("age")
+
+    real_words = [w for w in name.split() if len(w) >= 2]
+
+    # ── Tier 1: unambiguous full name ────────────────────────────────
+    if len(real_words) >= 2:
+        key = f"FULLNAME|{'_'.join(real_words)}|{gender}"
+        return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
+
+    # ── Tiers 2 & 3: truncated name — try to merge with existing profile ──
+    first = real_words[0] if real_words else "UNKNOWN"
+    existing_pid = _lookup_existing_pid(first, gender, phone)
+    if existing_pid:
+        return existing_pid
+
+    if phone and len(phone) >= 8:
+        key = f"TRUNCATED|{first}|{gender}|{phone}"
+        return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
+
+    decade = str((age // 10) * 10) if age else "XX"
+    key    = f"FIRST|{first}|{gender}|{decade}"
+    return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
+
+
+def _lookup_existing_pid(first_name: str, gender: str, phone: str) -> str | None:
+    """
+    Scan stored patient profiles for one whose:
+      - stored patient_name starts with first_name (case-insensitive)
+      - stored gender matches
+      - stored phone (if present) matches last-10-digit phone
+
+    Returns the existing patient_id string, or None if no match found.
+    This lets a truncated "SRINIWAS S" report merge into the existing
+    "SRINIWAS SRIRAM" full-name profile automatically.
+    """
+    if not STORE_DIR.exists():
+        return None
+    for csv_file in STORE_DIR.glob("*.csv"):
+        try:
+            df = pd.read_csv(csv_file, nrows=1)
+            if df.empty:
+                continue
+            stored_name   = _clean_name(str(df["patient_name"].iloc[0]))
+            stored_gender = str(df.get("gender", pd.Series([""])).iloc[0]).upper()
+            stored_phone  = ""
+            if "file_hash" in df.columns:
+                # Re-read without nrows to get phone if it was stored
+                pass
+            # Match: gender must agree, stored name must start with our first word,
+            # and if we have a phone it must match
+            if stored_gender != gender:
+                continue
+            stored_first = stored_name.split()[0] if stored_name.split() else ""
+            if stored_first != first_name.upper():
+                continue
+            # Phone check — read source_file column to find phone if stored
+            # The phone isn't stored in the CSV directly; use the PID file name
+            # as identity — just matching first_name + gender is enough when
+            # the first name is distinctive (≥5 chars) to avoid false merges
+            if len(first_name) >= 4:
+                return csv_file.stem   # return the patient_id (filename without .csv)
+        except Exception:
+            continue
+    return None
+
+
+# ─────────────────────────────────────────────
+# DUPLICATE DETECTION
+# ─────────────────────────────────────────────
+
+def file_hash(path: Path) -> str:
+    """SHA-256 of file bytes — used to detect re-uploads of the same PDF."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def is_duplicate_file(path: Path) -> bool:
+    """Return True if this exact file has already been stored in any patient profile."""
+    fh = file_hash(path)
+    for csv_file in STORE_DIR.glob("*.csv"):
+        try:
+            df = pd.read_csv(csv_file)
+            if "file_hash" in df.columns and fh in df["file_hash"].values:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+# ─────────────────────────────────────────────
+# EXTRACTION
+# ─────────────────────────────────────────────
+
+def find_value_in_text(text, pos):
+    snippet = text[pos: pos + 100]
+    # Strip cid artifacts that pdfplumber emits for special chars
+    snippet = re.sub(r'\(cid:\d+\)', '', snippet)
+
+    # Special case: Kauvery-style qualitative results e.g. 'Negative(0.00)'
+    qm = re.search(r'(?:Negative|Positive)\s*\(\s*(\d+(?:\.\d+)?)\s*\)', snippet, re.I)
+    if qm:
+        try:
+            return float(qm.group(1)), ""
+        except ValueError:
+            pass
+
+    m = re.search(
+        r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)' + r'\s*' + _UNIT_RE,
+        snippet, re.IGNORECASE
+    )
+    if not m:
+        # Try without unit — value only
+        m = re.search(r'[:\|\s.]*([<>]?\s*\d+(?:\.\d+)?)', snippet, re.IGNORECASE)
+        if not m:
+            return None
+        raw_val  = m.group(1).replace(" ", "").lstrip("<>")
+        raw_unit = ""
+    else:
+        raw_val  = m.group(1).replace(" ", "").lstrip("<>")
+        raw_unit = m.group(2) or ""
+    try:
+        value = float(raw_val)
+    except ValueError:
+        return None
+    # Allow 0.0 (e.g. Dengue NS1 Negative = 0.00), but reject negatives
+    if value < 0 or value >= 1_000_000:
+        return None
+    return value, normalize_unit(raw_unit)
+
+
+def _normalize_count_units(text: str) -> str:
+    """
+    Normalize Kauvery-style haematology count units that OCR misreads.
+      10^6/µL → written as '10°6/uL', '106/uL'
+      10^3/µL → OCR'd as '1043/uL', '1043/pL', '10°3/pL', '10^3/yL'
+    All are normalised to '10^3/uL' which is in _UNIT_MAP.
+    """
+    # 10^6/µL variants (OCR reads ° for ^ and the digit gets merged)
+    text = re.sub(r'10[°\^oO][6]/[uµypUP][Ll]', '10^6/uL', text)
+    # 10^3/µL variants
+    text = re.sub(r'10[°\^oO][3]/[uµypUP][Ll]', '10^3/uL', text)
+    # '1043/uL', '1043/pL', '1043/yL' — OCR merges '10^3' as '1043'
+    text = re.sub(r'\b1043/[uµypUP][Ll]\b', '10^3/uL', text)
+    return text
+
+
+def extract_biomarkers(text, gender=""):
+    results, seen = [], set()
+    # Normalize OCR count-unit artifacts before line-by-line processing
+    text = _normalize_count_units(text)
+    lines = text.split("\n")
+
+    for i, line in enumerate(lines):
+        clean = re.sub(r'\s+', ' ', line).strip()
+        if not clean:
+            continue
+        # Skip reference range / methodology / interpretation lines
+        if re.search(
+            r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:|'
+            r'associated tests|interpretation|clinical utility|references?\s*:|'
+            r'note\s*:|disclaimer|decreased levels|increased levels|pregnancy)\b',
+            clean, re.I
+        ):
+            continue
+        # Skip numbered annotation lines (e.g. "1. HbA1c is used for...")
+        if re.match(r'^\d+[\.\)]\s+[A-Z]', clean):
+            continue
+        # Skip lines that are purely a lab test code reference e.g. "(H0018)"
+        if re.search(r'\([A-Z]\d{4,}\)', clean):
             continue
 
-        unit = ts["unit"].iloc[-1] if "unit" in ts.columns else ""
+        lower = clean.lower()
+        for alias in _ALL_ALIASES:
+            canonical = _ALIAS_MAP[alias]
+            if canonical in seen:
+                continue
+            pattern = re.compile(r'(?<!\w)' + re.escape(alias) + r'(?!\w)', re.IGNORECASE)
+            match   = pattern.search(lower)
+            if not match:
+                continue
 
-        # Get normal range from dictionary
-        normal_min, normal_max = None, None
-        if test in biomarker_dictionary.index:
-            bm_info = biomarker_dictionary.loc[test]
-            normal_min = bm_info[\'normal_min\']
-            normal_max = bm_info[\'normal_max\']
-            
-        # Colour points by status
-        point_colors = []
-        for s in ts["status"]:
-            if "HIGH" in str(s):
-                point_colors.append("#ff6b6b")
-            elif "LOW" in str(s):
-                point_colors.append("#ffd166")
-            else:
-                point_colors.append("#00e5c3")
+            found = find_value_in_text(clean, match.end())
 
-        fig = go.Figure()
+            # Look up to 2 lines ahead for value or split unit
+            if not found:
+                for lookahead in range(1, 3):
+                    if i + lookahead < len(lines):
+                        next_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
+                        if re.search(
+                            r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:|'
+                            r'associated tests|interpretation|clinical utility|note\s*:|disclaimer)\b',
+                            next_line, re.I
+                        ):
+                            continue
+                        found = find_value_in_text(next_line, 0)
+                        if found:
+                            break
 
-        # Add normal range background if available
-        if normal_min is not None and normal_max is not None:
-            fig.add_hrect(
-                y0=normal_min, y1=normal_max,
-                fillcolor="#00e5c3", opacity=0.1,
-                line_width=0, layer="below",
-                name="Normal Range"
-            )
-        elif normal_min is not None:
-            # If only a min is defined (e.g., >X), shade below
-            # Need to get current y-axis range to determine appropriate y0
-            y_min_current = ts["value"].min() if not ts.empty else normal_min * 0.9
-            fig.add_hrect(
-                y0=y_min_current, y1=normal_min,
-                fillcolor="#ff6b6b", opacity=0.1,
-                line_width=0, layer="below",
-                name="Below Normal"
-            )
-        elif normal_max is not None:
-            # If only a max is defined (e.g., <X), shade above
-            y_max_current = ts["value"].max() if not ts.empty else normal_max * 1.1
-            fig.add_hrect(
-                y0=normal_max, y1=y_max_current,
-                fillcolor="#ff6b6b", opacity=0.1,
-                line_width=0, layer="below",
-                name="Above Normal"
-            )
+            # Unit on a standalone line below the value (e.g. Hitech DHEA SULPHATE)
+            if found and not found[1]:
+                for lookahead in range(1, 3):
+                    if i + lookahead < len(lines):
+                        unit_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
+                        unit_match = re.match(r'^' + _UNIT_RE + r'$', unit_line, re.I)
+                        if unit_match:
+                            found = (found[0], normalize_unit(unit_match.group(1)))
+                            break
 
-        # Line
-        fig.add_trace(go.Scatter(
-            x=ts["report_date"],
-            y=ts["value"],
-            mode="lines+markers+text",
-            line=dict(color="#00e5c3", width=2),
-            marker=dict(color=point_colors, size=10, line=dict(color="#0a0d12", width=2)),
-            text=[f"{v}" for v in ts["value"]],
-            textposition="top center",
-            name=test,
-            hovertemplate=
-                \'<b>Date</b>: %{x}<br>\
-                \'<b>Value</b>: %{y:.2f} \' + unit + \'<br>\
-                \'<b>Status</b>: %{text}<extra></extra>\'
-        ))
+            if not found:
+                continue
 
-        # Update layout for dark theme and better readability
-        fig.update_layout(
-            title=f"{test} Trend",
-            xaxis_title="Report Date",
-            yaxis_title=f"Value ({unit})",
-            plot_bgcolor=\'rgba(0,0,0,0)\',
-            paper_bgcolor=\'rgba(0,0,0,0)\',
-            font=dict(color= "var(--text)", family="DM Mono"),
-            hovermode="x unified",
-            margin=dict(l=40, r=40, t=40, b=40),
-            height=400,
-            xaxis=dict(
-                showgrid=True, gridcolor=\'var(--border)\',
-                zeroline=True, zerolinecolor=\'var(--border)\'
-            ),
-            yaxis=dict(
-                showgrid=True, gridcolor=\'var(--border)\',
-                zeroline=True, zerolinecolor=\'var(--border)\'
-            ),
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+            value, unit = found
+            ref_unit    = BIOMARKERS.get(canonical, {}).get("unit", "")
+            used_unit   = unit if unit else ref_unit
+
+            seen.add(canonical)
+            results.append({
+                "test_name": canonical,
+                "value":     value,
+                "unit":      used_unit,
+                "status":    flag_status(canonical, value, used_unit, gender),
+            })
+            break
+
+    return results
+
+
+# ─────────────────────────────────────────────
+# PROCESSING & STORAGE
+# ─────────────────────────────────────────────
+
+def compute_current_age(age_at_test: int, report_date: str) -> int:
+    """
+    Derive approximate birth year from age-at-test + report date,
+    then return how old the patient is today.
+    """
+    try:
+        report_year = int(str(report_date)[:4])
+        birth_year  = report_year - age_at_test
+        current_year = datetime.now().year
+        return current_year - birth_year
+    except Exception:
+        return age_at_test
+
+
+# ─────────────────────────────────────────────
+# OCR FALLBACK
+# ─────────────────────────────────────────────
+
+# Minimum characters of meaningful text required to trust pdfplumber output.
+# Image-only PDFs return near-empty strings; anything below this triggers OCR.
+_OCR_THRESHOLD = 150
+
+
+def _strip_ocr_line_noise(text: str) -> str:
+    """
+    Strip barcode/logo OCR artifacts (—, ==, =n, etc.) from line beginnings.
+    These appear when Tesseract reads the barcode column on the left margin
+    of Hitech-format reports.
+    """
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        # Remove any leading run of non-alphanumeric, non-parenthesis chars
+        cleaned.append(re.sub(r'^[^A-Za-z0-9(]+', '', line))
+    return "\n".join(cleaned)
+
+
+def _extract_text_ocr(pdf_path: Path) -> str:
+    """
+    Convert each PDF page to a 300-dpi image and run Tesseract OCR.
+    Returns combined text. Raises ImportError if dependencies are missing.
+    """
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+    except ImportError as e:
+        raise ImportError(
+            "OCR requires pdf2image and pytesseract. "
+            "Add 'pdf2image pytesseract' to requirements.txt "
+            "and 'tesseract-ocr poppler-utils' to packages.txt."
+        ) from e
+
+    pages = convert_from_path(str(pdf_path), dpi=300)
+    text = ""
+    for page in pages:
+        # --oem 3  : LSTM engine (best accuracy)
+        # --psm 6  : Assume uniform block of text (handles multi-column forms well)
+        page_text = pytesseract.image_to_string(
+            page, config="--oem 3 --psm 6"
         )
-        
-        # Add short description and interpretation summary to chart if available
-        if test in biomarker_dictionary.index:
-            bm_info = biomarker_dictionary.loc[test]
-            short_desc = bm_info[\'short_description\']
-            interp_summary = bm_info[\'interpretation_summary\']
-            
-            if pd.notna(short_desc):
-                st.markdown(f"**Description**: {short_desc}")
-            if pd.notna(interp_summary):
-                st.markdown(f"**Interpretation**: {interp_summary}")
-
-        st.plotly_chart(fig, use_container_width=True, config={\'displayModeBar\': False})
-        st.markdown("---")
+        text += page_text + "\n"
+    # Strip leading barcode/logo artifacts from each line
+    return _strip_ocr_line_noise(text)
 
 
-# ─────────────────────────────────────────────
-# MAIN APP LOGIC
-# ─────────────────────────────────────────────
+def _is_image_pdf(text: str) -> bool:
+    """Return True if pdfplumber extracted too little text to be useful."""
+    # Count only alphanumeric chars — ignore whitespace and noise
+    useful = re.sub(r'\s+', '', text)
+    return len(useful) < _OCR_THRESHOLD
 
-# Sidebar for navigation
-st.sidebar.header("Navigation")
-page = st.sidebar.radio("Go to", ["Upload Reports", "Patient Profiles", "LLM Review", "About"])
 
-# Global settings or actions in sidebar
-st.sidebar.markdown("---")
-st.sidebar.header("Global Actions")
+def process_pdf(pdf_path, verbose=True):
+    pdf_path = Path(pdf_path)
 
-# ═══════════════════════════════════════════════
-# PAGE: UPLOAD REPORTS
-# ═══════════════════════════════════════════════
+    # ── Pass 1: pdfplumber (fast, exact for machine-readable PDFs) ──
+    with pdfplumber.open(pdf_path) as pdf:
+        text = ""
+        for page in pdf.pages:
+            t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+            text += t + "\n"
 
-if page == "Upload Reports":
-    st.markdown(\'<div class="section-label">Upload New Lab Reports</div>\', unsafe_allow_html=True)
-    uploaded_files = st.file_uploader("Upload PDF Lab Reports", type=["pdf"], accept_multiple_files=True)
+    ocr_used = False
 
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            with st.status(f"Processing {uploaded_file.name}...", expanded=True) as status_box:
-                if is_duplicate_file(uploaded_file.name):
-                    st.info(f"Skipping {uploaded_file.name}: Duplicate file.")
-                    status_box.update(label=f"Skipped {uploaded_file.name}: Duplicate", state="complete", expanded=False)
-                    continue
+    # ── Pass 2: OCR fallback for image/scanned PDFs ──────────────────
+    if _is_image_pdf(text):
+        if verbose:
+            print(f"  {pdf_path.name}: low text yield — switching to OCR…")
+        try:
+            text = _extract_text_ocr(pdf_path)
+            ocr_used = True
+        except ImportError as e:
+            if verbose:
+                print(f"  OCR unavailable: {e}")
+            return pd.DataFrame(), ""
 
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                        tmp_file.write(uploaded_file.getvalue())
-                        tmp_file_path = Path(tmp_file.name)
+    meta    = extract_metadata(text)
+    pid     = make_patient_id(meta)
+    results = extract_biomarkers(text, gender=meta.get("gender", ""))
 
-                    st.write("Extracting data with `lab_extractor`...")
-                    extracted_data = process_pdf(tmp_file_path)
+    if verbose:
+        mode = " [OCR]" if ocr_used else ""
+        print(f"  {pdf_path.name}{mode}: {len(results)} tests | "
+              f"{meta.get('name','?')} | {meta.get('date','?')}")
 
-                    if extracted_data:
-                        st.write("Saving report...")
-                        save_report(extracted_data, uploaded_file.name)
-                        st.success(f"Successfully processed and saved {uploaded_file.name}.")
-                        status_box.update(label=f"Processed {uploaded_file.name}", state="complete", expanded=False)
-                    else:
-                        st.warning(f"No data extracted from {uploaded_file.name}.")
-                        status_box.update(label=f"Failed {uploaded_file.name}: No data", state="error", expanded=False)
+    if not results:
+        return pd.DataFrame(), text
 
-                except Exception as e:
-                    st.error(f"Error processing {uploaded_file.name}: {e}")
-                    status_box.update(label=f"Error {uploaded_file.name}", state="error", expanded=False)
-                finally:
-                    if \'tmp_file_path\' in locals() and tmp_file_path.exists():
-                        tmp_file_path.unlink()
-        st.rerun()
-
-# ═══════════════════════════════════════════════
-# PAGE: PATIENT PROFILES
-# ═══════════════════════════════════════════════
-
-elif page == "Patient Profiles":
-    st.markdown(\'<div class="section-label">Stored Patient Profiles</div>\', unsafe_allow_html=True)
-
-    patients = list_patients()
-
-    if not patients:
-        st.info("No patient profiles found. Upload some lab reports first.")
+    df = pd.DataFrame(results)
+    df["patient_id"]    = pid
+    df["patient_name"]  = meta["name"]
+    df["gender"]        = meta.get("gender", "")
+    df["age_at_test"]   = meta.get("age", "")
+    df["report_date"]   = meta["date"]
+    df["source_file"]   = pdf_path.name
+    df["file_hash"]     = file_hash(pdf_path)
+    df["ocr_extracted"] = ocr_used
+    df["llm_verified"]  = False   # set to True after LLM review + acceptance
+    df["llm_corrected"] = False   # set to True if value was changed by LLM
+    if meta.get("age") and meta.get("date"):
+        df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
     else:
-        patient_options = {
-            f"{p[\'patient_name\']}  ({p[\'n_reports\']} report(s))": p["patient_id"]
-            for p in patients
-        }
+        df["birth_year"] = None
+    return df, text   # return raw_text so caller can pass it to LLM verifier
 
-        selected_label = st.selectbox("Select Patient", list(patient_options.keys()), label_visibility="collapsed")
-        selected_pid   = patient_options[selected_label]
 
-        history = load_history(selected_pid)
 
-        if history.empty:
-            st.error("Could not load profile.")
+def save_report(df):
+    if df.empty:
+        return
+    path = STORE_DIR / f"{df['patient_id'].iloc[0]}.csv"
+    if path.exists():
+        existing      = pd.read_csv(path)
+        existing_name = str(existing["patient_name"].iloc[0]) if not existing.empty else ""
+        new_name      = str(df["patient_name"].iloc[0])
+        if len(new_name) > len(existing_name):
+            existing["patient_name"] = new_name
+        df = pd.concat([existing, df], ignore_index=True)
+    df.drop_duplicates(subset=["test_name", "report_date"], keep="first", inplace=True)
+    df.sort_values(["test_name", "report_date"]).to_csv(path, index=False)
+
+
+def load_history(patient_id):
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(path)
+    df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+    # Compute current age from the earliest known birth_year
+    if "birth_year" in df.columns:
+        birth_years = pd.to_numeric(df["birth_year"], errors="coerce").dropna()
+        if not birth_years.empty:
+            birth_year = int(birth_years.min())  # most accurate = earliest report's estimate
+            df["current_age"] = datetime.now().year - birth_year
         else:
-            render_patient_card(history)
-
-            # ── Per-report deletion ───────────────────────
-            report_dates = sorted(
-                history["report_date"].dropna().dt.strftime("%Y-%m-%d").unique(),
-                reverse=True
-            )
-
-            with st.expander("✏️  Manage Patient Data", expanded=False):
-
-                # Name correction
-                st.markdown(\'<div class="section-label">Correct patient name</div>\', unsafe_allow_html=True)
-                current_name = history["patient_name"].iloc[0]
-                new_name = st.text_input(
-                    "Patient name (edit to correct typos / OCR errors)",
-                    value=current_name,
-                    key="rename_input"
-                )
-                other_patients = [(p["patient_id"], p["patient_name"])
-                                  for p in list_patients()
-                                  if p["patient_id"] != selected_pid]
-
-                col_r1, col_r2, _ = st.columns([1, 1, 4])
-                with col_r1:
-                    if st.button("💾 Save name", key="rename_btn"):
-                        if new_name.strip() and new_name.strip().upper() != current_name:
-                            rename_patient(selected_pid, new_name)
-                            st.success(f"Name updated to **{new_name.strip().upper()}**.")
-                            st.rerun()
-                        else:
-                            st.info("No change detected.")
-
-                # Merge duplicate profiles
-                if other_patients:
-                    st.markdown("---")
-                    st.markdown(\'<div class="section-label">Merge with another patient profile</div>\', unsafe_allow_html=True)
-                    st.caption("Use this when a misspelled name (e.g. \'Baverley\' vs \'Beverley\') created two profiles for the same person. All reports from this profile will be moved into the selected target and this profile will be deleted.")
-                    merge_options = {f"{p[1]}  ({p[0]})" : p[0] for p in other_patients}
-                    merge_target_label = st.selectbox(
-                        "Merge this profile INTO →",
-                        options=list(merge_options.keys()),
-                        key="merge_target_select"
-                    )
-                    merge_target_id = merge_options[merge_target_label]
-                    with col_r2:
-                        if st.button("🔀 Merge profiles", key="merge_btn"):
-                            # Using st.dialog for confirmation
-                            if st.session_state.get(\'confirm_merge\', False):
-                                ok = merge_into_patient(selected_pid, merge_target_id)
-                                if ok:
-                                    st.success("Profiles merged. Redirecting to merged profile…")
-                                    st.session_state[\'confirm_merge\'] = False # Reset
-                                    st.rerun()
-                                else:
-                                    st.error("Merge failed — check both profiles exist.")
-                            else:
-                                with st.dialog("Confirm Merge", key="merge_dialog"):
-                                    st.write(f"Are you sure you want to merge **{current_name}** into **{merge_target_label.split(\'(\\'[0].strip()}**?")
-                                    st.write("This action cannot be undone.")
-                                    col_dialog_yes, col_dialog_no = st.columns(2)
-                                    with col_dialog_yes:
-                                        if st.button("Yes, Merge", type="primary"):
-                                            st.session_state[\'confirm_merge\'] = True
-                                            st.rerun()
-                                    with col_dialog_no:
-                                        if st.button("Cancel"):
-                                            st.session_state[\'confirm_merge\'] = False
-                                            st.rerun()
-
-                # Delete a single report
-                st.markdown("---")
-                st.markdown(\'<div class="section-label">Delete a specific report</div>\', unsafe_allow_html=True)
-                del_date = st.selectbox(
-                    "Choose report date to delete",
-                    options=report_dates,
-                    key="del_date_select"
-                )
-                col_a, col_b, _ = st.columns([1, 1, 4])
-                with col_a:
-                    if st.button("🗑 Delete this report", key="del_report_btn"):
-                        if st.session_state.get(\'confirm_delete_report\', False):
-                            ok = delete_report_by_date(selected_pid, del_date)
-                            if ok:
-                                st.success(f"Deleted report from {del_date}.")
-                                st.session_state[\'confirm_delete_report\'] = False # Reset
-                                st.rerun()
-                            else:
-                                st.error("Could not delete — date not found.")
-                        else:
-                            with st.dialog("Confirm Delete Report", key="delete_report_dialog"):
-                                st.write(f"Are you sure you want to delete the report from **{del_date}** for **{current_name}**?")
-                                st.write("This action cannot be undone.")
-                                col_dialog_yes, col_dialog_no = st.columns(2)
-                                with col_dialog_yes:
-                                    if st.button("Yes, Delete", type="primary"):
-                                        st.session_state[\'confirm_delete_report\'] = True
-                                        st.rerun()
-                                with col_dialog_no:
-                                    if st.button("Cancel"):
-                                        st.session_state[\'confirm_delete_report\'] = False
-                                        st.rerun()
-
-                # Delete entire patient
-                st.markdown("---")
-                st.markdown(\'<div class="section-label" style="color:#ff6b6b">Delete entire patient record</div>\', unsafe_allow_html=True)
-                st.warning(f"This will permanently erase ALL data for **{current_name}**.")
-                with col_b:
-                    if st.button("⛔ Delete Patient", key="del_patient_btn"):
-                        if st.session_state.get(\'confirm_delete_patient\', False):
-                            delete_patient(selected_pid)
-                            st.success("Patient record deleted.")
-                            st.session_state[\'confirm_delete_patient\'] = False # Reset
-                            st.rerun()
-                        else:
-                            with st.dialog("Confirm Delete Patient", key="delete_patient_dialog"):
-                                st.write(f"Are you absolutely sure you want to permanently erase ALL data for **{current_name}**?")
-                                st.write("This action cannot be undone.")
-                                col_dialog_yes, col_dialog_no = st.columns(2)
-                                with col_dialog_yes:
-                                    if st.button("Yes, Delete Patient", type="primary"):
-                                        st.session_state[\'confirm_delete_patient\'] = True
-                                        st.rerun()
-                                with col_dialog_no:
-                                    if st.button("Cancel"):
-                                        st.session_state[\'confirm_delete_patient\'] = False
-                                        st.rerun()
-
-            # ── Main content tabs ─────────────────────────
-            trends = generate_trends(history)
-
-            tab1, tab2, tab3 = st.tabs(["Latest Results", "Trends", "Full History"])
-
-            with tab1:
-                snapshot = (history.sort_values("report_date")
-                                   .groupby("test_name").last().reset_index())
-                render_summary_cards(snapshot)
-                render_results_table(snapshot)
-                st.download_button(
-                    "↓ Export CSV",
-                    data=snapshot.to_csv(index=False).encode("utf-8"),
-                    file_name=f"{safe_name(history)}_latest.csv",
-                    mime="text/csv"
-                )
-
-            with tab2:
-                render_trends_section(history, trends, key_prefix=f"pp_{selected_pid}")
-
-            with tab3:
-                st.markdown(\'<div class="section-label">All Test Records</div>\', unsafe_allow_html=True)
-                show_cols = ["report_date", "test_name", "value", "unit", "status", "source_file"]
-                avail     = [c for c in show_cols if c in history.columns]
-                st.dataframe(
-                    history[avail].sort_values(["report_date", "test_name"], ascending=[False, True]),
-                    width=\'stretch\',
-                    hide_index=True
-                )
-                st.download_button(
-                    "↓ Full History CSV",
-                    data=history.to_csv(index=False).encode("utf-8"),
-                    file_name=f"{safe_name(history)}_full_history.csv",
-                    mime="text/csv"
-                )
-
-
-# ═══════════════════════════════════════════════
-# PAGE: LLM REVIEW
-# ═══════════════════════════════════════════════
-
-elif page == "LLM Review":
-    st.markdown(\'<div class="section-label">🔍 LLM Verification Review</div>\', unsafe_allow_html=True)
-    st.markdown(
-        "Claude checked these reports after regex extraction and flagged potential errors or "
-        "missed tests. Review each item and **Accept** or **Reject** the suggestion.",
-        unsafe_allow_html=False
-    )
-
-    pending = load_pending_reviews()
-
-    if not pending:
-        st.success("✓ No pending reviews — all reports are verified.")
+            df["current_age"] = df.get("age_at_test", None)
     else:
-        for review in pending:
-            pid         = review["patient_id"]
-            report_date = review["report_date"]
-            diff_rows   = review.get("diff", [])
+        df["current_age"] = df.get("age_at_test", None)
+    return df
 
-            if not diff_rows:
+
+# ─────────────────────────────────────────────
+# RENAME / MERGE
+# ─────────────────────────────────────────────
+
+def rename_patient(patient_id: str, new_name: str) -> bool:
+    """Update patient_name in all rows of an existing profile."""
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return False
+    df = pd.read_csv(path)
+    df["patient_name"] = new_name.strip().upper()
+    df.to_csv(path, index=False)
+    return True
+
+
+def merge_into_patient(source_id: str, target_id: str) -> bool:
+    """
+    Merge all rows from source_id profile into target_id profile,
+    then delete the source profile. Used when a misspelled name
+    created a duplicate patient that should be the same person.
+    Returns True on success.
+    """
+    source_path = STORE_DIR / f"{source_id}.csv"
+    target_path = STORE_DIR / f"{target_id}.csv"
+    if not source_path.exists() or not target_path.exists():
+        return False
+    source_df = pd.read_csv(source_path)
+    target_df = pd.read_csv(target_path)
+    # Update patient_id in source rows to match target
+    source_df["patient_id"] = target_id
+    source_df["patient_name"] = target_df["patient_name"].iloc[0]
+    combined = pd.concat([target_df, source_df], ignore_index=True)
+    # Drop exact duplicates (same report_date + test_name)
+    combined = combined.drop_duplicates(subset=["report_date", "test_name"], keep="first")
+    combined.to_csv(target_path, index=False)
+    source_path.unlink()
+    return True
+
+
+# ─────────────────────────────────────────────
+# DELETE
+# ─────────────────────────────────────────────
+
+def delete_patient(patient_id: str) -> bool:
+    """Delete all stored data for a patient. Returns True on success."""
+    path = STORE_DIR / f"{patient_id}.csv"
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
+def delete_report_by_date(patient_id: str, report_date: str) -> bool:
+    """Remove all rows for a specific report_date from a patient's profile."""
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return False
+    df = pd.read_csv(path)
+    before = len(df)
+    df = df[df["report_date"].astype(str).str[:10] != str(report_date)[:10]]
+    if len(df) == before:
+        return False
+    if df.empty:
+        path.unlink()
+    else:
+        df.to_csv(path, index=False)
+    return True
+
+
+# ─────────────────────────────────────────────
+# TRENDS & TIMESERIES
+# ─────────────────────────────────────────────
+
+def generate_trends(history):
+    rows = []
+    for test, group in history.groupby("test_name"):
+        group = (group.dropna(subset=["report_date"])
+                      .sort_values("report_date")
+                      .drop_duplicates("report_date"))
+        if len(group) < 2:
+            continue
+        first, latest = group.iloc[0], group.iloc[-1]
+        delta = latest["value"] - first["value"]
+        pct   = round(delta / first["value"] * 100, 1) if first["value"] else 0
+        rows.append({
+            "test_name":     test,
+            "first_date":    str(first["report_date"])[:10],
+            "first_value":   first["value"],
+            "latest_date":   str(latest["report_date"])[:10],
+            "latest_value":  latest["value"],
+            "unit":          latest["unit"] if pd.notna(latest["unit"]) else "",
+            "change_%":      pct,
+            "trend":         "↑" if delta > 0 else "↓",
+            "latest_status": latest["status"],
+            "n_reports":     len(group),
+        })
+    if not rows:
+        return pd.DataFrame(columns=["test_name", "first_date", "first_value",
+                                     "latest_date", "latest_value", "unit",
+                                     "change_%", "trend", "latest_status", "n_reports"])
+    return pd.DataFrame(rows).sort_values("change_%", key=abs, ascending=False)
+
+
+def get_test_timeseries(history: pd.DataFrame, test_name: str) -> pd.DataFrame:
+    """Return date-sorted (report_date, value, status, unit) rows for one test."""
+    df = (history[history["test_name"] == test_name]
+          .dropna(subset=["report_date"])
+          .sort_values("report_date")
+          .drop_duplicates("report_date")[["report_date", "value", "status", "unit"]]
+          .copy())
+    df["report_date"] = pd.to_datetime(df["report_date"])
+    return df
+
+
+# ─────────────────────────────────────────────
+# PATIENT LIST
+# ─────────────────────────────────────────────
+
+def list_patients():
+    records = []
+    for csv_file in STORE_DIR.glob("*.csv"):
+        try:
+            df = pd.read_csv(csv_file)
+            if df.empty:
                 continue
-
-            diff = pd.DataFrame(diff_rows)
-            flagged = diff[diff["needs_review"] == True]
-
-            if flagged.empty:
-                delete_pending_review(pid, report_date)
-                continue
-
-            # Find patient name
-            history = load_history(pid)
-            patient_name = history["patient_name"].iloc[0] if not history.empty else pid
-
-            with st.expander(
-                f"📋 {patient_name} · {report_date} · {len(flagged)} item(s) to review",
-                expanded=True
-            ):
-                # Show the diff table
-                st.markdown(\'<div class="section-label">Flagged Values</div>\', unsafe_allow_html=True)
-
-                accepted_keys = []
-                rejected_keys = []
-
-                for _, row in flagged.iterrows():
-                    test      = row["test_name"]
-                    status    = row["status"]
-                    conf      = row.get("confidence", "high")
-                    note      = row.get("note", "")
-                    r_val     = row["regex_value"]
-                    r_unit    = row.get("regex_unit", "")
-                    llm_val   = row["llm_value"]
-                    llm_unit  = row.get("llm_unit", "")
-
-                    # Colour-code by status
-                    if status == "missed_by_regex":
-                        badge = "🆕 **MISSED**"
-                        desc  = f"Claude found this test in the report but regex missed it: **{llm_val} {llm_unit}**"
-                    elif status == "corrected":
-                        badge = "⚠️ **CORRECTED**"
-                        desc  = f"Regex extracted **{r_val} {r_unit}** → Claude says **{llm_val} {llm_unit}**"
-                    else:
-                        badge = "❓ **LOW CONFIDENCE**"
-                        desc  = f"Regex extracted **{r_val} {r_unit}** — Claude is unsure"
-
-                    col_info, col_accept, col_reject = st.columns([5, 1, 1])
-
-                    with col_info:
-                        st.markdown(f"{badge} &nbsp; **{test}**", unsafe_allow_html=True)
-                        st.caption(desc + (f"  \\n_Note: {note}_" if note else ""))
-                        if conf == "low":
-                            st.caption("⚠️ Claude has low confidence in this correction")
-
-                    widget_key = f"review_{pid}_{report_date}_{test}"
-                    with col_accept:
-                        if st.button("✓ Accept", key=f"acc_{widget_key}", type="primary"):
-                            accepted_keys.append(test)
-                    with col_reject:
-                        if st.button("✗ Reject", key=f"rej_{widget_key}"):
-                            rejected_keys.append(test)
-
-                st.markdown("---")
-                col_all, col_none, _ = st.columns([1.5, 1.5, 5])
-                with col_all:
-                    if st.button("✓ Accept All", key=f"acc_all_{pid}_{report_date}"):
-                        accepted_keys = flagged["test_name"].tolist()
-                with col_none:
-                    if st.button("✗ Reject All", key=f"rej_all_{pid}_{report_date}"):
-                        rejected_keys = flagged["test_name"].tolist()
-
-                # Process decisions
-                if accepted_keys or rejected_keys:
-                    if accepted_keys:
-                        # Load current saved data and apply corrections
-                        current_history = load_history(pid)
-                        report_df = current_history[
-                            current_history["report_date"].dt.strftime("%Y-%m-%d") == report_date
-                        ].copy()
-
-                        if not report_df.empty:
-                            corrected_df = apply_corrections(report_df, diff, accepted_keys)
-                            corrected_df["report_date"] = report_date
-
-                            # Remove old rows for this date and re-save with corrections
-                            other_dates = current_history[
-                                current_history["report_date"].dt.strftime("%Y-%m-%d") != report_date
-                            ]
-                            full_df = pd.concat([other_dates, corrected_df], ignore_index=True)
-                            csv_path = STORE_DIR / f"{pid}.csv"
-                            full_df.to_csv(csv_path, index=False)
-
-                            st.success(
-                                f"✓ Applied {len(accepted_keys)} correction(s) for "
-                                f"{patient_name} · {report_date}"
-                            )
-
-                    if rejected_keys:
-                        st.info(f"Rejected {len(rejected_keys)} suggestion(s) — original values kept.")
-
-                    # Clear this pending review
-                    remaining = [
-                        t for t in flagged["test_name"]
-                        if t not in accepted_keys and t not in rejected_keys
-                    ]
-                    if not remaining:
-                        delete_pending_review(pid, report_date)
-                        st.rerun()
-
-
-# ═══════════════════════════════════════════════
-# PAGE: ABOUT
-# ═══════════════════════════════════════════════
-
-elif page == "About":
-    st.markdown("""
-    <div style="max-width:640px">
-        <div class="section-label">About this platform</div>
-        <p style="color:#d4dbe8;line-height:1.8;font-size:0.88rem">
-            The <strong style="color:#fff">Longitudinal Biomarker Intelligence Platform</strong> extracts
-            structured data from PDF lab reports, flags out-of-range results, and tracks trends
-            across multiple reports over time.
-        </p>
-        <div class="section-label" style="margin-top:2rem">How It Works</div>
-        <p style="color:#d4dbe8;line-height:1.8;font-size:0.88rem">
-            1. Upload PDF lab reports — patient identity is detected automatically.<br>
-            2. Biomarkers are matched against a dictionary with 200+ canonical names.<br>
-            3. Values are compared to sex-specific normal ranges and flagged.<br>
-            4. Across multiple reports, trends, charts, and callouts are generated.<br>
-            5. Duplicate uploads are detected by file hash and skipped.
-        </p>
-        <div class="section-label" style="margin-top:2rem">Privacy Notice</div>
-        <p style="color:#d4dbe8;line-height:1.8;font-size:0.88rem">
-            Reports are processed locally. Patient profiles are stored as CSV files in
-            <code style="color:var(--accent)">data/patient_profiles/</code>.
-            Do not commit this directory to a public repository.
-        </p>
-    </div>""", unsafe_allow_html=True)
+            records.append({
+                "patient_id":   csv_file.stem,
+                "patient_name": df["patient_name"].iloc[0],
+                "gender":       df["gender"].iloc[0] if "gender" in df.columns else "",
+                "n_reports":    df["report_date"].nunique() if "report_date" in df.columns else 1,
+            })
+        except Exception:
+            continue
+    return records

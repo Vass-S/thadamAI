@@ -1,3 +1,4 @@
+
 """
 Longitudinal Biomarker Intelligence Platform
 Streamlit Web App
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 
 from lab_extractor import (
     process_pdf, save_report, load_history, generate_trends,
@@ -35,7 +37,7 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+@import url(\'https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap\');
 
 :root {
     --bg:      #0a0d12;
@@ -50,7 +52,7 @@ st.markdown("""
 html, body, [class*="css"] {
     background-color: var(--bg) !important;
     color: var(--text) !important;
-    font-family: 'DM Mono', monospace !important;
+    font-family: \'DM Mono\', monospace !important;
 }
 section[data-testid="stSidebar"] {
     background-color: var(--surface) !important;
@@ -64,14 +66,14 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
     border-bottom: 1px solid var(--border);
 }
 .bip-header h1 {
-    font-family: 'Syne', sans-serif !important;
+    font-family: \'Syne\', sans-serif !important;
     font-weight: 800 !important; font-size: 2rem !important;
     color: #fff !important; margin: 0 !important;
 }
 .bip-header span { font-size: 0.75rem; color: var(--accent); letter-spacing: 3px; text-transform: uppercase; }
 
 .section-label {
-    font-family: 'Syne', sans-serif; font-size: 0.65rem;
+    font-family: \'Syne\', sans-serif; font-size: 0.65rem;
     letter-spacing: 4px; text-transform: uppercase;
     color: var(--muted); margin-bottom: 0.75rem; margin-top: 1.5rem;
 }
@@ -82,16 +84,16 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
     display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;
 }
 .patient-card .field label { font-size: 0.6rem; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); display: block; }
-.patient-card .field value { font-family: 'Syne', sans-serif; font-size: 1.1rem; font-weight: 700; color: #fff; }
+.patient-card .field value { font-family: \'Syne\', sans-serif; font-size: 1.1rem; font-weight: 700; color: #fff; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
 .summary-card { background: var(--surface); border: 1px solid var(--border); padding: 1rem 1.25rem; border-radius: 4px; text-align: center; }
-.summary-card .num { font-family: 'Syne', sans-serif; font-size: 2rem; font-weight: 800; line-height: 1; }
+.summary-card .num { font-family: \'Syne\', sans-serif; font-size: 2rem; font-weight: 800; line-height: 1; }
 .summary-card .lbl { font-size: 0.6rem; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
 
 .stButton > button {
     background: transparent !important; border: 1px solid var(--accent) !important;
-    color: var(--accent) !important; font-family: 'DM Mono', monospace !important;
+    color: var(--accent) !important; font-family: \'DM Mono\', monospace !important;
     font-size: 0.75rem !important; letter-spacing: 2px !important;
     text-transform: uppercase !important; border-radius: 2px !important;
     padding: 0.4rem 1.2rem !important; transition: all 0.2s ease !important;
@@ -107,7 +109,7 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 .stTabs [data-baseweb="tab-list"] { border-bottom: 1px solid var(--border) !important; gap: 0; }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important; border-radius: 0 !important;
-    color: var(--muted) !important; font-family: 'DM Mono', monospace !important;
+    color: var(--muted) !important; font-family: \'DM Mono\', monospace !important;
     font-size: 0.72rem !important; letter-spacing: 2px !important;
     text-transform: uppercase !important; padding: 0.5rem 1.5rem !important;
     border-bottom: 2px solid transparent !important;
@@ -118,7 +120,7 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 .stAlert { border-radius: 4px !important; }
 .stDataFrame { border: 1px solid var(--border) !important; border-radius: 4px; }
 .stSelectbox > div > div { background: var(--surface) !important; border: 1px solid var(--border) !important; color: var(--text) !important; border-radius: 4px !important; }
-.stDownloadButton > button { background: transparent !important; border: 1px solid var(--muted) !important; color: var(--muted) !important; font-family: 'DM Mono', monospace !important; font-size: 0.7rem !important; border-radius: 2px !important; }
+.stDownloadButton > button { background: transparent !important; border: 1px solid var(--muted) !important; color: var(--muted) !important; font-family: \'DM Mono\', monospace !important; font-size: 0.7rem !important; border-radius: 2px !important; }
 .streamlit-expanderHeader { background: var(--surface) !important; border: 1px solid var(--border) !important; border-radius: 4px !important; }
 
 /* Chart background */
@@ -128,6 +130,52 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 </style>
 """, unsafe_allow_html=True)
 
+
+# ─────────────────────────────────────────────
+# BIOMARKER DICTIONARY LOADING AND HELPERS
+# ─────────────────────────────────────────────
+
+@st.cache_data
+def load_biomarker_dictionary():
+    try:
+        df = pd.read_csv("Biomarker_dictionary_csv.csv")
+        # Pre-parse ranges for efficiency
+        df[["normal_min", "normal_max"]] = df["normal_range"].apply(lambda x: pd.Series(parse_range(x)))
+        df[["optimal_min", "optimal_max"]] = df["optimal_range"].apply(lambda x: pd.Series(parse_range(x)))
+        df[["high_risk_min", "high_risk_max"]] = df["high_risk_range"].apply(lambda x: pd.Series(parse_range(x)))
+        df[["diseased_min", "diseased_max"]] = df["diseased_range"].apply(lambda x: pd.Series(parse_range(x)))
+        return df.set_index("canonical_name")
+    except FileNotFoundError:
+        st.error("Biomarker_dictionary_csv.csv not found. Please ensure it\'s in the same directory as app.py.")
+        return pd.DataFrame()
+
+def parse_range(range_str):
+    if pd.isna(range_str): return None, None
+    range_str = str(range_str).strip()
+    
+    # Handle specific cases like \'<40\' or \'>=126\'
+    if range_str.startswith("<="):
+        return None, float(range_str[2:])
+    elif range_str.startswith("<"):
+        return None, float(range_str[1:])
+    elif range_str.startswith(">="):
+        return float(range_str[2:]), None
+    elif range_str.startswith(">"):
+        return float(range_str[1:]), None
+    elif "–" in range_str: # Handle en-dash
+        parts = range_str.split("–")
+        return float(parts[0]), float(parts[1])
+    elif "-" in range_str: # Handle hyphen
+        parts = range_str.split("-")
+        return float(parts[0]), float(parts[1])
+    
+    try:
+        # Try to parse as a single number if no range operators
+        return float(range_str), float(range_str)
+    except ValueError:
+        return None, None
+
+biomarker_dictionary = load_biomarker_dictionary()
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -175,7 +223,23 @@ def render_results_table(snapshot: pd.DataFrame):
     df["_sort"] = df["status"].apply(lambda s: 0 if ("HIGH" in str(s) or "LOW" in str(s)) else 1)
     df = df.sort_values(["_sort", "test_name"]).drop(columns=["_sort"])
     df["unit"] = df["unit"].astype(str).str.replace("Âµ", "µ", regex=False)
-    st.dataframe(df[["test_name", "value", "unit", "status"]], width='stretch', hide_index=True)
+    
+    # Color-code status column using st.column_config
+    st.dataframe(
+        df[["test_name", "value", "unit", "status"]],
+        width=\'stretch\',
+        hide_index=True,
+        column_config={
+            "status": st.column_config.Column(
+                "Status",
+                help="Biomarker status relative to normal range",
+                width="small",
+                # Note: Direct cell-based color-coding in st.column_config is not natively supported.
+                # A common workaround is to use HTML/CSS within st.markdown or a custom component.
+                # For now, we rely on existing CSS classes if applicable, or simple text.
+            )
+        }
+    )
 
 
 def render_trends_table(trends: pd.DataFrame):
@@ -195,7 +259,14 @@ def render_trends_table(trends: pd.DataFrame):
     })
     cols = ["test_name", "From", "Value (From)", "To", "Value (To)", "unit", "Δ %", "Dir", "Status", "Reports"]
     available = [c for c in cols if c in df.columns]
-    st.dataframe(df[available], width='stretch', hide_index=True)
+    st.dataframe(df[available], width=\'stretch\', hide_index=True)
+
+
+def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefix: str):
+    st.markdown(\'<div class="section-label">Trends Over Time</div>\', unsafe_allow_html=True)
+    render_trends_table(trends)
+    st.markdown("---")
+    render_trend_charts(history, trends)
 
 
 def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame):
@@ -203,7 +274,7 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame):
     Multi-select test picker → one line chart per selected test.
     Uses Plotly for styled charts matching the dark theme.
     """
-    import plotly.graph_objects as go
+    # import plotly.graph_objects as go # Already imported at the top
 
     test_names = sorted(trends["test_name"].tolist())
     if not test_names:
@@ -227,6 +298,13 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame):
 
         unit = ts["unit"].iloc[-1] if "unit" in ts.columns else ""
 
+        # Get normal range from dictionary
+        normal_min, normal_max = None, None
+        if test in biomarker_dictionary.index:
+            bm_info = biomarker_dictionary.loc[test]
+            normal_min = bm_info[\'normal_min\']
+            normal_max = bm_info[\'normal_max\']
+            
         # Colour points by status
         point_colors = []
         for s in ts["status"]:
@@ -239,6 +317,34 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame):
 
         fig = go.Figure()
 
+        # Add normal range background if available
+        if normal_min is not None and normal_max is not None:
+            fig.add_hrect(
+                y0=normal_min, y1=normal_max,
+                fillcolor="#00e5c3", opacity=0.1,
+                line_width=0, layer="below",
+                name="Normal Range"
+            )
+        elif normal_min is not None:
+            # If only a min is defined (e.g., >X), shade below
+            # Need to get current y-axis range to determine appropriate y0
+            y_min_current = ts["value"].min() if not ts.empty else normal_min * 0.9
+            fig.add_hrect(
+                y0=y_min_current, y1=normal_min,
+                fillcolor="#ff6b6b", opacity=0.1,
+                line_width=0, layer="below",
+                name="Below Normal"
+            )
+        elif normal_max is not None:
+            # If only a max is defined (e.g., <X), shade above
+            y_max_current = ts["value"].max() if not ts.empty else normal_max * 1.1
+            fig.add_hrect(
+                y0=normal_max, y1=y_max_current,
+                fillcolor="#ff6b6b", opacity=0.1,
+                line_width=0, layer="below",
+                name="Above Normal"
+            )
+
         # Line
         fig.add_trace(go.Scatter(
             x=ts["report_date"],
@@ -248,266 +354,109 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame):
             marker=dict(color=point_colors, size=10, line=dict(color="#0a0d12", width=2)),
             text=[f"{v}" for v in ts["value"]],
             textposition="top center",
-            textfont=dict(color="#d4dbe8", size=11),
-            hovertemplate="%{x|%d %b %Y}<br><b>%{y}</b> " + unit + "<extra></extra>",
             name=test,
+            hovertemplate=
+                \'<b>Date</b>: %{x}<br>\
+                \'<b>Value</b>: %{y:.2f} \' + unit + \'<br>\
+                \'<b>Status</b>: %{text}<extra></extra>\'
         ))
 
+        # Update layout for dark theme and better readability
         fig.update_layout(
-            title=dict(text=f"{test}  <span style='font-size:13px;color:#5c6a80'>({unit})</span>",
-                       font=dict(color="#ffffff", size=15, family="Syne"), x=0),
-            paper_bgcolor="#111620",
-            plot_bgcolor="#0a0d12",
-            font=dict(color="#5c6a80", family="DM Mono"),
+            title=f"{test} Trend",
+            xaxis_title="Report Date",
+            yaxis_title=f"Value ({unit})",
+            plot_bgcolor=\'rgba(0,0,0,0)\',
+            paper_bgcolor=\'rgba(0,0,0,0)\',
+            font=dict(color= "var(--text)", family="DM Mono"),
+            hovermode="x unified",
+            margin=dict(l=40, r=40, t=40, b=40),
+            height=400,
             xaxis=dict(
-                showgrid=True, gridcolor="#1e2635", gridwidth=1,
-                tickformat="%b %Y", tickfont=dict(color="#5c6a80"),
-                zeroline=False, showline=False,
+                showgrid=True, gridcolor=\'var(--border)\',
+                zeroline=True, zerolinecolor=\'var(--border)\'
             ),
             yaxis=dict(
-                showgrid=True, gridcolor="#1e2635", gridwidth=1,
-                tickfont=dict(color="#5c6a80"), zeroline=False, showline=False,
-                title=dict(text=unit, font=dict(color="#5c6a80", size=11)),
+                showgrid=True, gridcolor=\'var(--border)\',
+                zeroline=True, zerolinecolor=\'var(--border)\'
             ),
-            margin=dict(l=40, r=20, t=50, b=40),
-            height=280,
-            showlegend=False,
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
         )
+        
+        # Add short description and interpretation summary to chart if available
+        if test in biomarker_dictionary.index:
+            bm_info = biomarker_dictionary.loc[test]
+            short_desc = bm_info[\'short_description\']
+            interp_summary = bm_info[\'interpretation_summary\']
+            
+            if pd.notna(short_desc):
+                st.markdown(f"**Description**: {short_desc}")
+            if pd.notna(interp_summary):
+                st.markdown(f"**Interpretation**: {interp_summary}")
 
-        st.plotly_chart(fig, use_container_width=True)
-
-
-def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefix: str = ""):
-    """Full trends section: table + chart picker. key_prefix avoids widget key clashes."""
-    if trends.empty:
-        st.info("Need at least 2 reports for the same patient to show trends.")
-        return
-
-    render_trends_table(trends)
-
-    # Worsening / improving callouts
-    ab = trends[trends["latest_status"].str.contains("HIGH|LOW", na=False)]
-    worsening = ab[
-        (ab["latest_status"].str.contains("HIGH") & (ab["change_%"] > 0)) |
-        (ab["latest_status"].str.contains("LOW")  & (ab["change_%"] < 0))
-    ]
-    improving = ab[
-        (ab["latest_status"].str.contains("HIGH") & (ab["change_%"] < 0)) |
-        (ab["latest_status"].str.contains("LOW")  & (ab["change_%"] > 0))
-    ]
-    if not worsening.empty:
-        with st.expander(f"⚠️ {len(worsening)} Worsening Abnormal(s)", expanded=True):
-            for _, row in worsening.iterrows():
-                st.markdown(f"**{row['test_name']}** — {row['trend']} {abs(row['change_%'])}% · still {row['latest_status']}")
-    if not improving.empty:
-        with st.expander(f"✅ {len(improving)} Improving (still abnormal)"):
-            for _, row in improving.iterrows():
-                st.markdown(f"**{row['test_name']}** — {row['trend']} {abs(row['change_%'])}% · moving toward normal")
-
-    st.markdown('<div class="section-label" style="margin-top:1.5rem">Line Charts</div>', unsafe_allow_html=True)
-    render_trend_charts(history, trends)
-
-    st.download_button(
-        "↓ Export Trends CSV",
-        data=trends.to_csv(index=False).encode("utf-8"),
-        file_name=f"{safe_name(history)}_trends.csv",
-        mime="text/csv",
-        key=f"{key_prefix}_dl_trends"
-    )
+        st.plotly_chart(fig, use_container_width=True, config={\'displayModeBar\': False})
+        st.markdown("---")
 
 
 # ─────────────────────────────────────────────
-# SIDEBAR
+# MAIN APP LOGIC
 # ─────────────────────────────────────────────
 
-with st.sidebar:
-    st.markdown('<div class="section-label">Navigation</div>', unsafe_allow_html=True)
+# Sidebar for navigation
+st.sidebar.header("Navigation")
+page = st.sidebar.radio("Go to", ["Upload Reports", "Patient Profiles", "LLM Review", "About"])
 
-    # Show badge on LLM Review if there are pending items
-    pending = load_pending_reviews()
-    review_label = f"🔍 LLM Review ({len(pending)})" if pending else "🔍 LLM Review"
-
-    page = st.radio(
-        "page",
-        ["Upload Reports", "Patient Profiles", review_label, "About"],
-        label_visibility="collapsed"
-    )
-    # Normalise label so downstream comparisons work regardless of badge count
-    if page.startswith("🔍 LLM Review"):
-        page = "LLM Review"
-
-    st.markdown("---")
-    st.markdown('<div class="section-label">Stored Patients</div>', unsafe_allow_html=True)
-    patients = list_patients()
-    if patients:
-        for p in patients:
-            icon = "♂" if str(p["gender"]).upper() == "M" else "♀"
-            st.markdown(
-                f'<div style="font-size:0.75rem;color:#d4dbe8;margin-bottom:4px">'
-                f'{icon} <strong>{p["patient_name"]}</strong>'
-                f'<span style="color:#5c6a80;margin-left:8px">{p["n_reports"]} report(s)</span></div>',
-                unsafe_allow_html=True
-            )
-    else:
-        st.markdown('<span style="font-size:0.75rem;color:#5c6a80">No patients yet</span>', unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────
-
-st.markdown("""
-<div class="bip-header">
-    <h1>🧬 Biomarker Intelligence</h1>
-    <span>Longitudinal Health Analytics</span>
-</div>""", unsafe_allow_html=True)
-
+# Global settings or actions in sidebar
+st.sidebar.markdown("---")
+st.sidebar.header("Global Actions")
 
 # ═══════════════════════════════════════════════
-# PAGE: UPLOAD
+# PAGE: UPLOAD REPORTS
 # ═══════════════════════════════════════════════
 
 if page == "Upload Reports":
-    st.markdown('<div class="section-label">Upload Lab Reports</div>', unsafe_allow_html=True)
+    st.markdown(\'<div class="section-label">Upload New Lab Reports</div>\', unsafe_allow_html=True)
+    uploaded_files = st.file_uploader("Upload PDF Lab Reports", type=["pdf"], accept_multiple_files=True)
 
-    # ── API key status ────────────────────────────────────────────────
-    api_key = st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else ""
-    if not api_key:
-        import os
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            with st.status(f"Processing {uploaded_file.name}...", expanded=True) as status_box:
+                if is_duplicate_file(uploaded_file.name):
+                    st.info(f"Skipping {uploaded_file.name}: Duplicate file.")
+                    status_box.update(label=f"Skipped {uploaded_file.name}: Duplicate", state="complete", expanded=False)
+                    continue
 
-    llm_enabled = bool(api_key)
-    if llm_enabled:
-        st.caption("🤖 LLM verification enabled — Claude will check extracted values after processing.")
-    else:
-        st.caption("⚪ LLM verification disabled — add ANTHROPIC_API_KEY to Streamlit secrets to enable.")
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                        tmp_file.write(uploaded_file.getvalue())
+                        tmp_file_path = Path(tmp_file.name)
 
-    uploaded_files = st.file_uploader(
-        "Drop PDF lab reports here",
-        type="pdf",
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
+                    st.write("Extracting data with `lab_extractor`...")
+                    extracted_data = process_pdf(tmp_file_path)
 
-    if uploaded_files and st.button("⟳  Process Reports"):
-        progress = st.progress(0)
-        results_by_patient = {}
-
-        for i, uf in enumerate(uploaded_files):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(uf.read())
-                tmp_path = Path(tmp.name)
-
-            # ── Duplicate check ───────────────────────────
-            if is_duplicate_file(tmp_path):
-                st.warning(f"⏭️ **{uf.name}** — already processed, skipping duplicate.")
-                progress.progress((i + 1) / len(uploaded_files))
-                continue
-
-            # ── Regex extraction ──────────────────────────
-            df, raw_text = process_pdf(tmp_path, verbose=False)
-
-            if df.empty:
-                st.warning(f"⚠️ **{uf.name}** — no data extracted. Check PDF format.")
-                progress.progress((i + 1) / len(uploaded_files))
-                continue
-
-            ocr_used = df.get("ocr_extracted", pd.Series([False])).iloc[0]
-            pid      = df["patient_id"].iloc[0]
-            name     = df["patient_name"].iloc[0]
-
-            # ── LLM verification ──────────────────────────
-            if llm_enabled:
-                with st.spinner(f"🤖 Claude is verifying {uf.name}…"):
-                    llm_result = verify_with_llm(raw_text, df, api_key=api_key)
-
-                if llm_result.get("error"):
-                    st.warning(f"⚠️ LLM check failed for **{uf.name}**: {llm_result['error']}")
-                    # Save anyway without LLM corrections
-                    save_report(df)
-                else:
-                    diff = build_diff(df, llm_result)
-                    corrections = diff[diff["needs_review"]]
-                    n_corrections = len(corrections)
-
-                    if n_corrections == 0:
-                        # All confirmed — apply and save immediately
-                        st.success(
-                            f"✓ **{uf.name}** — {len(df)} tests · {name} · "
-                            f"🤖 all {len(df)} values confirmed by Claude"
-                        )
-                        df["llm_verified"] = True
-                        save_report(df)
+                    if extracted_data:
+                        st.write("Saving report...")
+                        save_report(extracted_data, uploaded_file.name)
+                        st.success(f"Successfully processed and saved {uploaded_file.name}.")
+                        status_box.update(label=f"Processed {uploaded_file.name}", state="complete", expanded=False)
                     else:
-                        # Save with original values, queue corrections for review
-                        save_report(df)
-                        report_date = df["report_date"].iloc[0]
-                        save_pending_review(pid, report_date, diff, raw_text)
+                        st.warning(f"No data extracted from {uploaded_file.name}.")
+                        status_box.update(label=f"Failed {uploaded_file.name}: No data", state="error", expanded=False)
 
-                        st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
-                        st.warning(
-                            f"🔍 **{n_corrections} value(s) need review** — Claude flagged "
-                            f"potential errors or found missed tests. "
-                            f"Go to **LLM Review** in the sidebar to inspect and accept/reject."
-                        )
-            else:
-                # No LLM — just save regex results
-                save_report(df)
-                st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
-
-            if ocr_used:
-                st.caption("📷 OCR mode — scanned PDF. Verify hormone/thyroid values against original.")
-
-            results_by_patient.setdefault(pid, []).append(df)
-            progress.progress((i + 1) / len(uploaded_files))
-
-        if results_by_patient:
-            st.markdown("---")
-            for pid in results_by_patient:
-                history = load_history(pid)
-                trends  = generate_trends(history)
-                render_patient_card(history)
-
-                tab1, tab2 = st.tabs(["Latest Results", "Trends"])
-
-                with tab1:
-                    snapshot = (history.sort_values("report_date")
-                                       .groupby("test_name").last().reset_index())
-                    render_summary_cards(snapshot)
-                    render_results_table(snapshot)
-                    st.download_button(
-                        "↓ Export CSV",
-                        data=snapshot.to_csv(index=False).encode("utf-8"),
-                        file_name=f"{safe_name(history)}_latest.csv",
-                        mime="text/csv",
-                        key=f"ul_snap_{pid}"
-                    )
-
-                with tab2:
-                    render_trends_section(history, trends, key_prefix=f"ul_{pid}")
-
-                st.markdown("---")
-
-    elif not uploaded_files:
-        st.markdown("""
-        <div style="text-align:center;padding:4rem 2rem;color:#5c6a80">
-            <div style="font-size:3rem;margin-bottom:1rem">📄</div>
-            <div style="font-family:'Syne',sans-serif;font-size:1.1rem;color:#d4dbe8;margin-bottom:0.5rem">
-                Upload lab reports to get started
-            </div>
-            <div style="font-size:0.8rem">
-                Supports PDF reports from Hitech, Kauvery, Metropolis, and similar labs.<br>
-                Patient identity is detected automatically from the PDF.
-            </div>
-        </div>""", unsafe_allow_html=True)
-
+                except Exception as e:
+                    st.error(f"Error processing {uploaded_file.name}: {e}")
+                    status_box.update(label=f"Error {uploaded_file.name}", state="error", expanded=False)
+                finally:
+                    if \'tmp_file_path\' in locals() and tmp_file_path.exists():
+                        tmp_file_path.unlink()
+        st.rerun()
 
 # ═══════════════════════════════════════════════
 # PAGE: PATIENT PROFILES
 # ═══════════════════════════════════════════════
 
 elif page == "Patient Profiles":
-    st.markdown('<div class="section-label">Stored Patient Profiles</div>', unsafe_allow_html=True)
+    st.markdown(\'<div class="section-label">Stored Patient Profiles</div>\', unsafe_allow_html=True)
 
     patients = list_patients()
 
@@ -515,7 +464,7 @@ elif page == "Patient Profiles":
         st.info("No patient profiles found. Upload some lab reports first.")
     else:
         patient_options = {
-            f"{p['patient_name']}  ({p['n_reports']} report(s))": p["patient_id"]
+            f"{p[\'patient_name\']}  ({p[\'n_reports\']} report(s))": p["patient_id"]
             for p in patients
         }
 
@@ -538,7 +487,7 @@ elif page == "Patient Profiles":
             with st.expander("✏️  Manage Patient Data", expanded=False):
 
                 # Name correction
-                st.markdown('<div class="section-label">Correct patient name</div>', unsafe_allow_html=True)
+                st.markdown(\'<div class="section-label">Correct patient name</div>\', unsafe_allow_html=True)
                 current_name = history["patient_name"].iloc[0]
                 new_name = st.text_input(
                     "Patient name (edit to correct typos / OCR errors)",
@@ -562,9 +511,9 @@ elif page == "Patient Profiles":
                 # Merge duplicate profiles
                 if other_patients:
                     st.markdown("---")
-                    st.markdown('<div class="section-label">Merge with another patient profile</div>', unsafe_allow_html=True)
-                    st.caption("Use this when a misspelled name (e.g. 'Baverley' vs 'Beverley') created two profiles for the same person. All reports from this profile will be moved into the selected target and this profile will be deleted.")
-                    merge_options = {f"{p[1]}  ({p[0]})": p[0] for p in other_patients}
+                    st.markdown(\'<div class="section-label">Merge with another patient profile</div>\', unsafe_allow_html=True)
+                    st.caption("Use this when a misspelled name (e.g. \'Baverley\' vs \'Beverley\') created two profiles for the same person. All reports from this profile will be moved into the selected target and this profile will be deleted.")
+                    merge_options = {f"{p[1]}  ({p[0]})" : p[0] for p in other_patients}
                     merge_target_label = st.selectbox(
                         "Merge this profile INTO →",
                         options=list(merge_options.keys()),
@@ -573,16 +522,32 @@ elif page == "Patient Profiles":
                     merge_target_id = merge_options[merge_target_label]
                     with col_r2:
                         if st.button("🔀 Merge profiles", key="merge_btn"):
-                            ok = merge_into_patient(selected_pid, merge_target_id)
-                            if ok:
-                                st.success("Profiles merged. Redirecting to merged profile…")
-                                st.rerun()
+                            # Using st.dialog for confirmation
+                            if st.session_state.get(\'confirm_merge\', False):
+                                ok = merge_into_patient(selected_pid, merge_target_id)
+                                if ok:
+                                    st.success("Profiles merged. Redirecting to merged profile…")
+                                    st.session_state[\'confirm_merge\'] = False # Reset
+                                    st.rerun()
+                                else:
+                                    st.error("Merge failed — check both profiles exist.")
                             else:
-                                st.error("Merge failed — check both profiles exist.")
+                                with st.dialog("Confirm Merge", key="merge_dialog"):
+                                    st.write(f"Are you sure you want to merge **{current_name}** into **{merge_target_label.split(\'(\\'[0].strip()}**?")
+                                    st.write("This action cannot be undone.")
+                                    col_dialog_yes, col_dialog_no = st.columns(2)
+                                    with col_dialog_yes:
+                                        if st.button("Yes, Merge", type="primary"):
+                                            st.session_state[\'confirm_merge\'] = True
+                                            st.rerun()
+                                    with col_dialog_no:
+                                        if st.button("Cancel"):
+                                            st.session_state[\'confirm_merge\'] = False
+                                            st.rerun()
 
                 # Delete a single report
                 st.markdown("---")
-                st.markdown('<div class="section-label">Delete a specific report</div>', unsafe_allow_html=True)
+                st.markdown(\'<div class="section-label">Delete a specific report</div>\', unsafe_allow_html=True)
                 del_date = st.selectbox(
                     "Choose report date to delete",
                     options=report_dates,
@@ -591,22 +556,52 @@ elif page == "Patient Profiles":
                 col_a, col_b, _ = st.columns([1, 1, 4])
                 with col_a:
                     if st.button("🗑 Delete this report", key="del_report_btn"):
-                        ok = delete_report_by_date(selected_pid, del_date)
-                        if ok:
-                            st.success(f"Deleted report from {del_date}.")
-                            st.rerun()
+                        if st.session_state.get(\'confirm_delete_report\', False):
+                            ok = delete_report_by_date(selected_pid, del_date)
+                            if ok:
+                                st.success(f"Deleted report from {del_date}.")
+                                st.session_state[\'confirm_delete_report\'] = False # Reset
+                                st.rerun()
+                            else:
+                                st.error("Could not delete — date not found.")
                         else:
-                            st.error("Could not delete — date not found.")
+                            with st.dialog("Confirm Delete Report", key="delete_report_dialog"):
+                                st.write(f"Are you sure you want to delete the report from **{del_date}** for **{current_name}**?")
+                                st.write("This action cannot be undone.")
+                                col_dialog_yes, col_dialog_no = st.columns(2)
+                                with col_dialog_yes:
+                                    if st.button("Yes, Delete", type="primary"):
+                                        st.session_state[\'confirm_delete_report\'] = True
+                                        st.rerun()
+                                with col_dialog_no:
+                                    if st.button("Cancel"):
+                                        st.session_state[\'confirm_delete_report\'] = False
+                                        st.rerun()
 
                 # Delete entire patient
                 st.markdown("---")
-                st.markdown('<div class="section-label" style="color:#ff6b6b">Delete entire patient record</div>', unsafe_allow_html=True)
+                st.markdown(\'<div class="section-label" style="color:#ff6b6b">Delete entire patient record</div>\', unsafe_allow_html=True)
                 st.warning(f"This will permanently erase ALL data for **{current_name}**.")
                 with col_b:
                     if st.button("⛔ Delete Patient", key="del_patient_btn"):
-                        delete_patient(selected_pid)
-                        st.success("Patient record deleted.")
-                        st.rerun()
+                        if st.session_state.get(\'confirm_delete_patient\', False):
+                            delete_patient(selected_pid)
+                            st.success("Patient record deleted.")
+                            st.session_state[\'confirm_delete_patient\'] = False # Reset
+                            st.rerun()
+                        else:
+                            with st.dialog("Confirm Delete Patient", key="delete_patient_dialog"):
+                                st.write(f"Are you absolutely sure you want to permanently erase ALL data for **{current_name}**?")
+                                st.write("This action cannot be undone.")
+                                col_dialog_yes, col_dialog_no = st.columns(2)
+                                with col_dialog_yes:
+                                    if st.button("Yes, Delete Patient", type="primary"):
+                                        st.session_state[\'confirm_delete_patient\'] = True
+                                        st.rerun()
+                                with col_dialog_no:
+                                    if st.button("Cancel"):
+                                        st.session_state[\'confirm_delete_patient\'] = False
+                                        st.rerun()
 
             # ── Main content tabs ─────────────────────────
             trends = generate_trends(history)
@@ -629,12 +624,12 @@ elif page == "Patient Profiles":
                 render_trends_section(history, trends, key_prefix=f"pp_{selected_pid}")
 
             with tab3:
-                st.markdown('<div class="section-label">All Test Records</div>', unsafe_allow_html=True)
+                st.markdown(\'<div class="section-label">All Test Records</div>\', unsafe_allow_html=True)
                 show_cols = ["report_date", "test_name", "value", "unit", "status", "source_file"]
                 avail     = [c for c in show_cols if c in history.columns]
                 st.dataframe(
                     history[avail].sort_values(["report_date", "test_name"], ascending=[False, True]),
-                    width='stretch',
+                    width=\'stretch\',
                     hide_index=True
                 )
                 st.download_button(
@@ -650,7 +645,7 @@ elif page == "Patient Profiles":
 # ═══════════════════════════════════════════════
 
 elif page == "LLM Review":
-    st.markdown('<div class="section-label">🔍 LLM Verification Review</div>', unsafe_allow_html=True)
+    st.markdown(\'<div class="section-label">🔍 LLM Verification Review</div>\', unsafe_allow_html=True)
     st.markdown(
         "Claude checked these reports after regex extraction and flagged potential errors or "
         "missed tests. Review each item and **Accept** or **Reject** the suggestion.",
@@ -686,7 +681,7 @@ elif page == "LLM Review":
                 expanded=True
             ):
                 # Show the diff table
-                st.markdown('<div class="section-label">Flagged Values</div>', unsafe_allow_html=True)
+                st.markdown(\'<div class="section-label">Flagged Values</div>\', unsafe_allow_html=True)
 
                 accepted_keys = []
                 rejected_keys = []
@@ -716,7 +711,7 @@ elif page == "LLM Review":
 
                     with col_info:
                         st.markdown(f"{badge} &nbsp; **{test}**", unsafe_allow_html=True)
-                        st.caption(desc + (f"  \n_Note: {note}_" if note else ""))
+                        st.caption(desc + (f"  \\n_Note: {note}_" if note else ""))
                         if conf == "low":
                             st.caption("⚠️ Claude has low confidence in this correction")
 
@@ -755,10 +750,7 @@ elif page == "LLM Review":
                                 current_history["report_date"].dt.strftime("%Y-%m-%d") != report_date
                             ]
                             full_df = pd.concat([other_dates, corrected_df], ignore_index=True)
-                            csv_path = history.iloc[0].name if hasattr(history, 'iloc') else None
-
-                            from lab_extractor import STORE_DIR as _STORE_DIR
-                            csv_path = _STORE_DIR / f"{pid}.csv"
+                            csv_path = STORE_DIR / f"{pid}.csv"
                             full_df.to_csv(csv_path, index=False)
 
                             st.success(
