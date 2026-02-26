@@ -1,31 +1,56 @@
-canonical_name,aliases,unit,sex,optimal_range,normal_range,high_risk_range,diseased_range,category,sample_type,fasting_required,short_description,interpretation_summary,related_conditions,si_unit,si_conversion,common_panels,match_priority
-Glucose (Fasting),"glucose fasting, fasting glucose, fbs, fbg, glucose (fasting), plasma glucose fasting, blood sugar fasting",mg/dL,both,70-90,70-99,100-125,>=126,Glucose Metabolism,Plasma,Yes,Measures blood sugar after fasting,100–125 suggests prediabetes. ≥126 indicates diabetes if persistent.,"Diabetes, Prediabetes",mmol/L,mg/dL ÷ 18,"Diabetes Panel, Annual Health Check",high
-Glucose (Post Prandial 2hr),"pp glucose, postprandial glucose, glucose pp 2 hours, glucose (pp 2 hours), glucose post prandial",mg/dL,both,<120,<140,140-199,>=200,Glucose Metabolism,Plasma,No,Measures blood sugar 2 hours after meal,140–199 indicates impaired glucose tolerance. ≥200 suggests diabetes.,"Diabetes, Insulin resistance",mmol/L,mg/dL ÷ 18,Diabetes Panel,high
-HbA1c,"hba1c, hb a1c, glycated hemoglobin, glycosylated hemoglobin, haemoglobin a1c, hb a1c hplc",%,both,<5.3,<5.7,5.7-6.4,>=6.5,Glucose Metabolism,Whole Blood,No,Average blood sugar over 2–3 months,5.7–6.4% prediabetes. ≥6.5% diabetes.,Diabetes,mmol/mol,(HbA1c% − 2.15) × 10.929,Diabetes Panel,high
-Total Cholesterol,"total cholesterol, cholesterol total, cholesterol serum, chol total",mg/dL,both,<180,<200,200-239,>=240,Lipid Profile,Serum,No,Total cholesterol in blood,High levels increase cardiovascular risk.,Heart disease,mmol/L,mg/dL × 0.0259,Lipid Panel,high
-HDL Cholesterol,"hdl cholesterol, hdl-c, hdl cholesterol direct",mg/dL,both,>=60,40-59,<40,<40,Lipid Profile,Serum,No,Good cholesterol,Low HDL increases heart disease risk.,Heart disease,mmol/L,mg/dL × 0.0259,Lipid Panel,high
-LDL Cholesterol,"ldl cholesterol, ldl-c, ldl cholesterol direct",mg/dL,both,<70,<100,100-159,>=160,Lipid Profile,Serum,No,Bad cholesterol,High LDL significantly increases heart disease risk.,Heart disease,mmol/L,mg/dL × 0.0259,Lipid Panel,high
-Triglycerides,"triglycerides, triglyceride, triglycerides serum",mg/dL,both,<100,<150,150-199,>=200,Lipid Profile,Serum,Yes,Blood fats used for energy,High levels linked to metabolic syndrome.,Metabolic syndrome,mmol/L,mg/dL × 0.0113,Lipid Panel,high
-VLDL Cholesterol,"vldl cholesterol, vldl-c",mg/dL,both,<20,5-30,>30,>40,Lipid Profile,Serum,No,Very low density lipoprotein,High levels associated with triglyceride elevation.,Heart disease,mmol/L,mg/dL × 0.0259,Lipid Panel,medium
-Creatinine (Serum),"creatinine serum, serum creatinine, creatinine blood",mg/dL,both,0.6-1.0,0.6-1.3,1.4-1.9,>=2.0,Kidney Function,Serum,No,Kidney filtration marker,Elevated levels suggest reduced kidney function.,CKD,µmol/L,mg/dL × 88.4,Renal Panel,high
-Urea (Serum),"urea serum, blood urea, bun urea nitrogen",mg/dL,both,20-30,15-40,41-60,>60,Kidney Function,Serum,No,Protein waste product,High values may indicate kidney dysfunction or dehydration.,"CKD, Dehydration",mmol/L,mg/dL × 0.357,Renal Panel,high
-Uric Acid,"uric acid serum, uric acid blood",mg/dL,both,3.5-5.5,3.5-7.2,7.3-9.0,>9.0,Metabolic,Serum,No,Breakdown product of purines,High levels linked to gout and kidney stones.,Gout,µmol/L,mg/dL × 59.48,Metabolic Panel,medium
-AST (SGOT),"ast, sgot, s.g.o.t., aspartate aminotransferase",U/L,both,<30,<40,41-100,>100,Liver Function,Serum,No,Liver and muscle enzyme,High levels indicate liver or muscle injury.,Hepatitis,U/L,Same,LFT,high
-ALT (SGPT),"alt, sgpt, s.g.p.t., alanine aminotransferase",U/L,both,<30,<56,57-150,>150,Liver Function,Serum,No,Liver-specific enzyme,Elevated levels suggest liver inflammation.,Fatty liver,U/L,Same,LFT,high
-Alkaline Phosphatase,"alkaline phosphatase, alp",U/L,both,60-120,44-147,<40 or >147,>200,Liver Function,Serum,No,Enzyme from liver and bone,High values may indicate bile duct obstruction or bone disorder.,Liver disease,U/L,Same,LFT,medium
-Gamma GT,"gamma gt, ggt, ggtp",U/L,both,<30,<55,56-150,>150,Liver Function,Serum,No,Marker of bile duct function,High levels often linked to alcohol use or fatty liver.,Alcoholic liver disease,U/L,Same,LFT,medium
-Bilirubin (Total),"bilirubin total, total bilirubin",mg/dL,both,0.3-1.0,0.3-1.2,1.3-2.0,>2.0,Liver Function,Serum,No,Breakdown product of red blood cells,Elevated levels cause jaundice and suggest liver dysfunction.,Jaundice,µmol/L,mg/dL × 17.1,LFT,high
-Total Protein,"total proteins, serum protein",g/dL,both,6.8-8.0,6.3-8.2,<6.3 or >8.2,<5.5 or >9.0,Liver Function,Serum,No,Total blood protein,Low levels suggest malnutrition or liver disease.,Liver disease,g/L,g/dL × 10,LFT,medium
-Albumin,albumin serum,g/dL,both,4.0-5.0,3.5-5.5,<3.5,<3.0,Liver Function,Serum,No,Major blood protein made by liver,Low levels indicate liver or kidney disease.,Liver disease,g/L,g/dL × 10,LFT,medium
-Globulin,globulin serum,g/dL,both,2.3-3.2,2.0-3.5,<2.0 or >3.5,<1.5 or >4.0,Liver Function,Serum,No,Immune-related blood proteins,Abnormal levels may indicate infection or immune disorder.,Autoimmune disease,g/L,g/dL × 10,LFT,medium
-TSH,"tsh, tsh 3rd generation, hs tsh, thyroid stimulating hormone",mIU/L,both,0.5-2.5,0.4-4.0,4.1-10,>10,Thyroid,Serum,No,Controls thyroid hormone production,High TSH suggests hypothyroidism. Low suggests hyperthyroidism.,Thyroid disorders,mIU/L,Same,Thyroid Panel,high
-Free T3,"free t3, ft3, triiodothyronine free",pg/mL,both,3.2-4.2,2.0-4.4,1.8-2.0 or 4.5-5.0,<1.8 or >5.0,Thyroid,Serum,No,Active thyroid hormone,Helps assess thyroid function along with TSH.,Thyroid disorders,pmol/L,pg/mL × 1.536,Thyroid Panel,medium
-Free T4,"free t4, ft4, thyroxine free",ng/dL,both,1.0-1.5,0.8-1.8,<0.8 or >1.8,<0.5 or >2.5,Thyroid,Serum,No,Primary thyroid hormone,Interpreted with TSH for thyroid diagnosis.,Thyroid disorders,pmol/L,ng/dL × 12.87,Thyroid Panel,medium
-Vitamin D (25-OH),"vitamin d, 25 hydroxy vitamin d, 25(oh)d",ng/mL,both,40-60,30-100,20-29,<20,Vitamins,Serum,No,Measures vitamin D stores,<20 indicates deficiency affecting bone and immunity.,Osteoporosis,nmol/L,ng/mL × 2.496,Vitamin Panel,high
-Vitamin B12,"vitamin b12, vit b12, cyanocobalamin serum",pg/mL,both,400-700,200-900,150-200,<150,Vitamins,Serum,No,Essential vitamin for nerves and blood cells,Low levels cause anemia and nerve damage.,B12 deficiency anemia,pmol/L,pg/mL × 0.738,Vitamin Panel,high
-Haemoglobin,"haemoglobin, hemoglobin, hb, hgb",g/dL,both,13-16,12-17,11-11.9,<11,CBC,Whole Blood,No,Oxygen carrying protein in blood,Low levels indicate anemia.,Anemia,g/L,g/dL × 10,CBC,high
-Total WBC Count,"total wbc count, wbc count, tlc",cells/µL,both,5000-9000,4000-11000,3000-3999 or 11001-20000,<3000 or >20000,CBC,Whole Blood,No,White blood cells count,High suggests infection. Low suggests immune suppression.,Infection,10^9/L,cells/µL ÷ 1000,CBC,high
-Platelet Count,"platelet count, platelets",cells/µL,both,150000-400000,150000-450000,100000-149000,<100000,CBC,Whole Blood,No,Helps blood clot,Low increases bleeding risk.,Thrombocytopenia,10^9/L,cells/µL ÷ 1000,CBC,high
-ESR,"esr, erythrocyte sedimentation rate",mm/hr,both,<15,<20,20-50,>50,Inflammation,Whole Blood,No,General inflammation marker,Elevated levels suggest infection or chronic inflammation.,Autoimmune disease,mm/hr,Same,Inflammation Panel,medium
-hsCRP,"hscrp, high sensitivity crp, hs-crp",mg/L,both,<1,<3,3-10,>10,Inflammation,Serum,No,Cardiovascular inflammation marker,Higher values increase heart disease risk.,Heart disease,mg/L,Same,Cardiac Risk Panel,high
-Urine Routine Examination,"urine routine, urine analysis, urine complete analysis",NA,both,NA,NA,NA,NA,Urine,Urine,No,Basic urine screening test,"Detects infection, kidney issues, or metabolic abnormalities.","UTI, Kidney disease",NA,NA,Urine Panel,medium
+canonical_name,aliases,unit,sex,optimal_range,normal_range,high_risk_range,diseased_range
+Total Cholesterol,"total cholesterol, cholesterol total, cholesterol-total",mg/dL,both,<180,<200,200-239,>=240
+HDL Cholesterol,"hdl cholesterol, hdl-c",mg/dL,male,>=60,40-59,<40,<40
+HDL Cholesterol,"hdl cholesterol, hdl-c",mg/dL,female,>=60,50-59,<50,<50
+LDL Cholesterol,"ldl cholesterol, ldl cholestrol, ldl-c",mg/dL,both,<70,<100,100-159,>=160
+Triglycerides,"triglycerides, triglyceride",mg/dL,both,<100,<150,150-199,>=200
+VLDL Cholesterol,"vldl cholesterol, vldl-c",mg/dL,both,<20,5-30,>30,>40
+Non HDL Cholesterol,"non hdl cholesterol, non-hdl cholesterol",mg/dL,both,<100,<130,130-159,>=160
+APO Lipoprotein A1,"apo lipoprotein a1, apolipoprotein a1",mg/dL,both,>=140,120-160,<120,<100
+APO Lipoprotein B,"apo lipoprotein b, apolipoprotein b",mg/dL,both,<80,<100,100-129,>=130
+Lipoprotein(a),"lipoprotein a, lp(a), lp a",mg/dL,both,<14,<30,30-50,>50
+Glucose (Fasting),"glucose fasting, fasting glucose",mg/dL,both,70-90,70-99,100-125,>=126
+HbA1c,"hb a1c, hba1c",%,both,<5.3,<5.7,5.7-6.4,>=6.5
+Glucose (Post Prandial 2hr),"pp glucose, postprandial glucose",mg/dL,both,<120,<140,140-199,>=200
+Urea (Serum),"urea serum, blood urea",mg/dL,both,20-30,15-40,41-60,>60
+Creatinine (Serum),"creatinine serum, serum creatinine",mg/dL,male,0.7-1.0,0.7-1.3,1.4-1.9,>=2.0
+Creatinine (Serum),"creatinine serum, serum creatinine",mg/dL,female,0.6-0.9,0.6-1.1,1.2-1.9,>=2.0
+Vitamin B12,"vitamin b12, vit b12",pg/mL,both,400-700,200-900,150-200,<150
+Vitamin D (25-OH),"vitamin d, 25 hydroxy vitamin d",ng/mL,both,40-60,30-100,20-29,<20
+Testosterone (Total),"testosterone, total testosterone",ng/dL,male,600-900,300-1000,200-299,<200
+Free Testosterone,free testosterone,pg/mL,male,15-25,9-30,5-8,<5
+DHEA Sulphate,"dhea sulphate, dhea-s",µg/dL,both,200-400,80-560,50-79,<50
+DHEA,"dhea, dehydroepiandrosterone",ng/dL,both,300-800,180-1250,<180,<100
+Cortisol (AM),cortisol am,µg/dL,both,10-18,6-23,<6 or >23,<3 or >25
+Growth Hormone,growth hormone,ng/mL,both,<1,<3,>3,>10 (random)
+IGF-I,"igf-i, igf1",ng/mL,both,150-250,115-307,<115 or >307,Marked deviation age-adjusted
+AST (SGOT),"sgot, s.g.o.t. (ast)",U/L,both,<30,<40,41-100,>100
+ALT (SGPT),"sgpt, s.g.p.t. (alt)",U/L,both,<30,<56,57-150,>150
+Alkaline Phosphatase,"alkaline phosphatase, alp",U/L,both,60-120,44-147,<40 or >147,>200
+Gamma GT,"gamma gt, ggt",U/L,both,<30,<55,56-150,>150
+Bilirubin (Total),bilirubin total,mg/dL,both,0.3-1.0,0.3-1.2,1.3-2.0,>2.0
+Bilirubin (Direct),bilirubin direct,mg/dL,both,<0.2,<0.3,0.3-1.0,>1.0
+Bilirubin (Indirect),bilirubin indirect,mg/dL,both,0.2-0.8,0.2-0.8,0.9-1.5,>1.5
+Total Protein,"total proteins, total protein",g/dL,both,6.8-8.0,6.3-8.2,<6.3 or >8.2,<5.5 or >9.0
+Albumin,albumin,g/dL,both,4.0-5.0,3.5-5.5,<3.5,<3.0
+Globulin,globulin,g/dL,both,2.3-3.2,2.0-3.5,<2.0 or >3.5,<1.5 or >4.0
+A/G Ratio,a/g ratio,ratio,both,1.5-2.0,1.2-2.2,<1.0,<0.8
+TSH,"tsh, thyroid stimulating hormone",mIU/L,both,0.5-2.5,0.4-4.0,4.1-10,>10
+hsCRP,"hscrp, hs-crp",mg/L,both,<1,<3,3-10,>10
+Haemoglobin,"haemoglobin, hemoglobin, hb",g/dL,male,14-16,13.5-17.5,12-13.4,<12
+Haemoglobin,"haemoglobin, hemoglobin, hb",g/dL,female,13-15,12-15.5,11-11.9,<11
+Total CHO / HDL Ratio,total cho / hdl ratio,ratio,both,<3.0,<3.5,3.5-5.0,>5.0
+Free T3,free triiodothyronine,pg/mL,both,3.2-4.2,2.0-4.4,4.5-5.0 or 1.8-2.0,>5.0 or <1.8
+Haemoglobin,"haemoglobin,hgb,hb,hemoglobin",g/dL,male,14-16,13-17,12-12.9,<12
+Haemoglobin,"haemoglobin,hgb,hb,hemoglobin",g/dL,female,13-15,12-15,11-11.9,<11
+Haematocrit,"haematocrit,hct,packed cell volume,pcv,hematocrit",%,male,42-50,40-52,36-39,<36
+Haematocrit,"haematocrit,hct,packed cell volume,pcv,hematocrit",%,female,38-44,36-46,33-35,<33
+Total RBC Count,"total rbc count,rbc count,red blood cell count,rbc,red cell count",million/µL,male,4.8-5.5,4.5-5.9,4.0-4.4,<4.0
+Total RBC Count,"total rbc count,rbc count,red blood cell count,rbc,red cell count",million/µL,female,4.3-5.0,4.0-5.2,3.5-3.9,<3.5
+MCV,"mean corpuscular volume,mcv,mean corpuscular volume (mcv)",fL,both,85-95,80-100,100-110 or 75-79,>110 or <75
+MCH,"mean corpuscular haemoglobin,mch,(mch) mean corpuscular haemoglobin,mean corpuscular hemoglobin",pg,both,28-32,27-32,25-26,<25
+MCHC,"mean corpuscular haemoglobin concentration,mchc,(mchc) mean corpuscular haemoglobin,mean corpuscular hemoglobin concentration",g/dL,both,32-35,31.5-35,30-31,<30
+RDW-CV,"rdw - cv,rdw,rdw-cv,red cell distribution width,rdw cv",%,both,11.5-13.5,11.5-14.5,14.6-16,>16
+Total WBC Count,"total wbc count,wbc count,white blood cell count,wbc,total leucocyte count,tlc,white cell count",cells/µL,both,5000-9000,4000-11000,11001-20000 or 3000-3999,>20000 or <3000
+Neutrophil,"neutrophil,neutrophils,neutrophil %,neutrophil count %",%,both,45-65,40-70,71-80 or 30-39,>80 or <30
+Lymphocyte,"lymphocyte,lymphocytes,lymphocyte %,lymphocyte count %",%,both,25-35,20-40,41-50 or 15-19,>50 or <15

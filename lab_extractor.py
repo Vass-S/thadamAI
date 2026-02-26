@@ -210,38 +210,20 @@ def load_dictionary(path):
     biomarkers = {}
     alias_map  = {}
 
-    # Guard: check required columns exist before iterating
-    required_cols = {"canonical_name", "unit", "sex", "normal_range", "aliases"}
-    missing_cols  = required_cols - set(df.columns)
-    if missing_cols:
-        raise ValueError(
-            f"Biomarker CSV is missing columns: {missing_cols}. "
-            f"Found: {list(df.columns)}. "
-            f"Check the CSV header row is intact and not shifted."
-        )
-
-    import warnings
-    for row_num, (_, row) in enumerate(df.iterrows(), start=2):  # start=2: row 1 = header
-        # Skip blank rows silently — common artifact of Excel editing
-        if pd.isna(row["canonical_name"]) or str(row["canonical_name"]).strip() == "":
-            continue
-        try:
-            canonical = str(row["canonical_name"]).strip()
-            if canonical not in biomarkers:
-                biomarkers[canonical] = {"unit": str(row["unit"]).strip(), "sex_rows": []}
-            biomarkers[canonical]["sex_rows"].append({
-                "sex":          str(row["sex"]).strip().lower(),
-                "normal_range": str(row["normal_range"]).strip(),
-            })
-            # CSV aliases take priority — process them first
-            if pd.notna(row["aliases"]) and str(row["aliases"]).strip():
-                for alias in str(row["aliases"]).split(","):
-                    a = alias.strip().lower()
-                    if a and a not in alias_map:
-                        alias_map[a] = canonical
-        except Exception as e:
-            # Log the bad row but keep going — don't crash the whole app
-            warnings.warn(f"Skipping CSV row {row_num} ('{row.get('canonical_name', '?')}\'): {e}")
+    for _, row in df.iterrows():
+        canonical = row["canonical_name"].strip()
+        if canonical not in biomarkers:
+            biomarkers[canonical] = {"unit": str(row["unit"]).strip(), "sex_rows": []}
+        biomarkers[canonical]["sex_rows"].append({
+            "sex":          str(row["sex"]).strip().lower(),
+            "normal_range": str(row["normal_range"]).strip(),
+        })
+        # CSV aliases take priority — process them first
+        if pd.notna(row["aliases"]) and str(row["aliases"]).strip():
+            for alias in str(row["aliases"]).split(","):
+                a = alias.strip().lower()
+                if a and a not in alias_map:
+                    alias_map[a] = canonical
 
     # EXTRA_ALIASES in code = fallback for tests not yet in CSV
     for canonical, aliases in EXTRA_ALIASES.items():
