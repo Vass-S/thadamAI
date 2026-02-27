@@ -635,60 +635,62 @@ def render_patient_card(history: pd.DataFrame):
 
 # ─────────────────────────────────────────────
 # RENDER: RADIAL BIOMARKER OVERVIEW
-# Inspired by Image 1 — polar scatter showing
-# all biomarkers, out-of-range highlighted
 # ─────────────────────────────────────────────
 
-def render_radial_overview(snapshot: pd.DataFrame):
-    """Polar scatter chart: each biomarker on its own spoke, dot = value,
-    colored by status (teal=optimal, blue=normal, lavender=low, coral=high/critical).
-    Centre shows count of out-of-range biomarkers."""
-    import math
-
+def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
+    """Polar scatter: each spoke = one biomarker, dot colour = status.
+    filter_status: 'all' | 'normal' | 'oor' | 'critical'
+    Zones: inner green=optimal, middle=normal, outer=high-risk (coral fill).
+    No centre count — removed per request.
+    """
     df = snapshot.copy()
     df["unit"] = df["unit"].apply(clean_unit)
     df["_ord"] = df["status"].apply(_status_sort)
     df = df.sort_values(["_ord", "test_name"]).reset_index(drop=True)
 
+    # Apply filter
+    if filter_status == "critical":
+        df = df[df["status"].str.contains("CRITICAL", na=False)]
+    elif filter_status == "oor":
+        df = df[df["status"].str.contains("HIGH|LOW", na=False)]
+    elif filter_status == "normal":
+        df = df[~df["status"].str.contains("HIGH|LOW|CRITICAL", na=False)]
+
     n = len(df)
     if n == 0:
+        st.info("No biomarkers match this filter.")
         return
 
-    oor_count = df["status"].str.contains("HIGH|LOW", na=False).sum()
-
-    # For each biomarker, compute a normalised radial position (0–1)
-    # where 0.5 = exactly on normal boundary, >0.5 = above, <0.5 = below
+    # Compute radii: 0.35 = inner optimal zone, 0.65 = normal zone boundary, 0.9+ = high-risk
     radii = []
     for _, row in df.iterrows():
         bm = bm_lookup(row["test_name"])
-        lo = bm.get("optimal_min") or bm.get("normal_min")
-        hi = bm.get("optimal_max") or bm.get("normal_max")
+        o_lo = bm.get("optimal_min"); o_hi = bm.get("optimal_max")
+        n_lo = bm.get("normal_min");  n_hi = bm.get("normal_max")
         try:
             val = float(row["value"])
         except (ValueError, TypeError):
-            radii.append(0.5)
-            continue
+            radii.append(0.5); continue
 
-        if lo is not None and hi is not None and hi > lo:
+        # For one-sided ranges like <100: treat boundary as the hi
+        lo = o_lo if o_lo is not None else n_lo
+        hi = o_hi if o_hi is not None else n_hi
+
+        if hi is not None and lo is not None and hi > lo:
             mid = (lo + hi) / 2
-            half_range = (hi - lo) / 2
-            # normalise: 0.5 = mid of range
-            r = 0.5 + (val - mid) / (hi - lo)
-            r = max(0.08, min(0.97, r))
+            # Map: mid → 0.5, lo boundary → 0.3, hi boundary → 0.7
+            r = 0.5 + (val - mid) / (hi - lo) * 0.4
         elif hi is not None and hi > 0:
-            r = min(0.97, val / hi)
-            r = max(0.08, r)
+            # <X style: 0 → 0, X → 0.6, 2X → 0.9
+            r = (val / hi) * 0.6
         elif lo is not None and lo > 0:
-            r = min(0.97, val / (lo * 2))
-            r = max(0.08, r)
+            r = min(0.9, lo / max(val, 0.001) * 0.4 + 0.3)
         else:
             r = 0.5
-        radii.append(r)
+        radii.append(max(0.08, min(0.98, r)))
 
-    # Assign angles evenly
     angles_deg = [i * 360 / n for i in range(n)]
 
-    # Colors by status
     def dot_color(s):
         s = str(s)
         if "CRITICAL" in s: return CRIT
@@ -696,167 +698,141 @@ def render_radial_overview(snapshot: pd.DataFrame):
         if "LOW"      in s: return PURPLE
         return ACCENT
 
-    colors  = [dot_color(s) for s in df["status"]]
-    sizes   = [16 if "CRITICAL" in str(s) or "HIGH" in str(s) else 12 for s in df["status"]]
+    colors = [dot_color(s) for s in df["status"]]
+    sizes  = [18 if "CRITICAL" in str(s) or "HIGH" in str(s) or "LOW" in str(s) else 13
+              for s in df["status"]]
 
     def fmt_val(v):
         try: return f"{float(v):.4g}"
         except: return str(v)
 
-    hover = [
-        f"<b>{row['test_name']}</b><br>{fmt_val(row['value'])} {row['unit']}<br>{row.get('status','')}"
-        for _, row in df.iterrows()
+    hover_texts = [
+        f"<b>{r['test_name']}</b><br>Value: {fmt_val(r['value'])} {r['unit']}<br>Status: {r.get('status','Normal')}"
+        for _, r in df.iterrows()
     ]
 
     fig = go.Figure()
 
-    # ── Concentric reference circles (dashed) ──
-    for r_frac, label in [(0.3, ""), (0.5, "Optimal"), (0.75, ""), (1.0, "Out of Range")]:
-        theta_ring = list(range(0, 361, 5))
-        r_ring     = [r_frac] * len(theta_ring)
-        fig.add_trace(go.Scatterpolar(
-            r=r_ring, theta=theta_ring,
-            mode="lines",
-            line=dict(color=BORDER if r_frac != 0.5 else ACCENT,
-                      width=1 if r_frac != 0.5 else 1.2,
-                      dash="dot" if r_frac != 0.5 else "dash"),
-            showlegend=False, hoverinfo="skip",
-        ))
+    # ── Coloured zone fills ──────────────────────────────────────────
+    theta_full = list(range(0, 361, 3))
 
-    # ── Highlight out-of-range sector backgrounds ──
+    # Outer danger zone (coral, 0.72–1.0)
+    fig.add_trace(go.Scatterpolar(
+        r=[1.0]*len(theta_full), theta=theta_full,
+        fill="toself", fillcolor="rgba(249,123,90,0.06)",
+        line=dict(color="rgba(249,123,90,0.2)", width=1, dash="dot"),
+        showlegend=False, hoverinfo="skip", mode="lines",
+    ))
+    # Normal zone (blue, 0.35–0.72)
+    fig.add_trace(go.Scatterpolar(
+        r=[0.72]*len(theta_full), theta=theta_full,
+        fill="toself", fillcolor="rgba(116,185,232,0.06)",
+        line=dict(color=BORDER, width=1, dash="dot"),
+        showlegend=False, hoverinfo="skip", mode="lines",
+    ))
+    # Optimal inner zone (teal, 0–0.35)
+    fig.add_trace(go.Scatterpolar(
+        r=[0.35]*len(theta_full), theta=theta_full,
+        fill="toself", fillcolor="rgba(78,205,196,0.10)",
+        line=dict(color=ACCENT, width=1.2, dash="dash"),
+        showlegend=False, hoverinfo="skip", mode="lines",
+    ))
+    # Mid ring
+    fig.add_trace(go.Scatterpolar(
+        r=[0.55]*len(theta_full), theta=theta_full,
+        fill="none",
+        line=dict(color=BORDER, width=0.8, dash="dot"),
+        showlegend=False, hoverinfo="skip", mode="lines",
+    ))
+
+    # ── Out-of-range spoke highlights ───────────────────────────────
+    spread = 360 / n
     for i, (_, row) in enumerate(df.iterrows()):
         s = str(row["status"])
         if "HIGH" in s or "LOW" in s or "CRITICAL" in s:
-            bg_color = f"rgba(249,123,90,0.07)" if "HIGH" in s or "CRITICAL" in s else "rgba(192,132,252,0.07)"
-            spread = 360 / n
-            theta_sector = [angles_deg[i] - spread/2, angles_deg[i] - spread/2,
-                            angles_deg[i] + spread/2, angles_deg[i] + spread/2]
-            r_sector = [0, 1.05, 1.05, 0]
+            c = "rgba(249,123,90,0.09)" if "HIGH" in s or "CRITICAL" in s else "rgba(192,132,252,0.09)"
+            t = [angles_deg[i] - spread*0.45, angles_deg[i] - spread*0.45,
+                 angles_deg[i] + spread*0.45, angles_deg[i] + spread*0.45]
             fig.add_trace(go.Scatterpolar(
-                r=r_sector, theta=theta_sector,
-                fill="toself",
-                fillcolor=bg_color,
+                r=[0, 1.02, 1.02, 0], theta=t,
+                fill="toself", fillcolor=c,
                 line=dict(width=0),
                 showlegend=False, hoverinfo="skip",
             ))
 
-    # ── Data dots ──
+    # ── Data dots ───────────────────────────────────────────────────
     fig.add_trace(go.Scatterpolar(
-        r=radii,
-        theta=angles_deg,
+        r=radii, theta=angles_deg,
         mode="markers",
-        marker=dict(
-            color=colors,
-            size=sizes,
-            line=dict(color=SURFACE, width=2.5),
-        ),
-        text=df["test_name"],
-        customdata=hover,
+        marker=dict(color=colors, size=sizes, line=dict(color=SURFACE, width=2.5)),
+        customdata=hover_texts,
         hovertemplate="%{customdata}<extra></extra>",
         showlegend=False,
     ))
 
-    # ── Centre annotation ──
-    oor_color = ORANGE if oor_count > 0 else ACCENT
-    fig.add_annotation(
-        text=f"<b style='font-size:2.2rem;color:{TEXT}'>{oor_count:02d}</b>",
-        xref="paper", yref="paper", x=0.5, y=0.52,
-        showarrow=False, font=dict(size=28, color=TEXT, family="DM Sans"),
-        align="center",
-    )
-    fig.add_annotation(
-        text=f"Biomarkers<br>Out of Range" if oor_count != 1 else "Biomarker<br>Out of Range",
-        xref="paper", yref="paper", x=0.5, y=0.42,
-        showarrow=False, font=dict(size=11, color=MUTED, family="DM Sans"),
-        align="center",
-    )
+    # ── Biomarker name labels at outer rim ──────────────────────────
+    fig.add_trace(go.Scatterpolar(
+        r=[1.16]*n, theta=angles_deg,
+        mode="text",
+        text=[t[:10]+"…" if len(t)>10 else t for t in df["test_name"]],
+        textfont=dict(size=8, color=MUTED, family="DM Sans"),
+        showlegend=False, hoverinfo="skip", cliponaxis=False,
+    ))
 
-    # ── Legend dots (top-right) ──
+    # ── Zone text labels (right side) ───────────────────────────────
+    zone_annotations = [
+        dict(text="Optimal", xref="paper", yref="paper", x=0.98, y=0.62,
+             showarrow=False, font=dict(size=10, color=ACCENT, family="DM Sans"), xanchor="right"),
+        dict(text="Normal", xref="paper", yref="paper", x=0.98, y=0.53,
+             showarrow=False, font=dict(size=10, color=BLUE, family="DM Sans"), xanchor="right"),
+        dict(text="Out of Range", xref="paper", yref="paper", x=0.98, y=0.44,
+             showarrow=False, font=dict(size=10, color=ORANGE, family="DM Sans"), xanchor="right"),
+    ]
+
+    # Legend dots
     legend_items = [
-        ("Optimal", ACCENT), ("Normal", BLUE),
-        ("Out of Range", ORANGE), ("Low", PURPLE),
+        ("Optimal",      ACCENT),
+        ("Normal",       BLUE),
+        ("Low",          PURPLE),
+        ("Out of Range", ORANGE),
+        ("Critical",     CRIT),
+    ]
+    legend_annotations = [
+        dict(
+            text=f'<span style="color:{c}">●</span> {lbl}',
+            xref="paper", yref="paper",
+            x=1.02, y=0.95 - i*0.075,
+            showarrow=False,
+            font=dict(size=10, color=TEXT, family="DM Sans"),
+            xanchor="left",
+        )
+        for i, (lbl, c) in enumerate(legend_items)
     ]
 
     fig.update_layout(
         polar=dict(
             bgcolor=SURFACE,
-            radialaxis=dict(
-                visible=False, range=[0, 1.1],
-                showticklabels=False, showgrid=False, showline=False,
-            ),
+            radialaxis=dict(visible=False, range=[0, 1.2],
+                            showticklabels=False, showgrid=False, showline=False),
             angularaxis=dict(
                 tickmode="array",
                 tickvals=angles_deg,
-                ticktext=["" for _ in df["test_name"]],  # hide names — too cluttered
-                showgrid=True,
-                gridcolor=BORDER,
-                gridwidth=1,
+                ticktext=[""]*n,
+                showgrid=True, gridcolor=BORDER, gridwidth=1,
                 linecolor=BORDER,
-                tickfont=dict(size=9, color=MUTED, family="DM Sans"),
-                direction="clockwise",
-                rotation=90,
+                direction="clockwise", rotation=90,
             ),
         ),
         paper_bgcolor=SURFACE,
-        plot_bgcolor=SURFACE,
         font=dict(color=TEXT, family="DM Sans"),
-        margin=dict(l=60, r=120, t=40, b=40),
-        height=420,
+        margin=dict(l=50, r=130, t=20, b=20),
+        height=400,
         showlegend=False,
-        annotations=[
-            dict(
-                text=f'<span style="color:{c}">●</span> {lbl}',
-                xref="paper", yref="paper",
-                x=1.01, y=0.9 - i * 0.07,
-                showarrow=False,
-                font=dict(size=11, color=TEXT, family="DM Sans"),
-                xanchor="left",
-            )
-            for i, (lbl, c) in enumerate(legend_items)
-        ] + [
-            # Re-add centre labels (annotations list overwrites add_annotation)
-            dict(
-                text=f"<b>{oor_count:02d}</b>",
-                xref="paper", yref="paper", x=0.5, y=0.55,
-                showarrow=False, font=dict(size=30, color=TEXT, family="DM Sans"), align="center",
-            ),
-            dict(
-                text="Biomarkers<br>Out of Range",
-                xref="paper", yref="paper", x=0.5, y=0.43,
-                showarrow=False, font=dict(size=11, color=MUTED, family="DM Sans"), align="center",
-            ),
-        ],
+        annotations=legend_annotations + zone_annotations,
         hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(color=TEXT, family="DM Sans")),
     )
 
-    # Tick labels for biomarker names — use a separate scatter at r=1.08 for readability
-    label_r  = [1.12] * n
-    fig.add_trace(go.Scatterpolar(
-        r=label_r, theta=angles_deg,
-        mode="text",
-        text=[t[:12] + "…" if len(t) > 12 else t for t in df["test_name"]],
-        textfont=dict(size=8, color=MUTED, family="DM Sans"),
-        showlegend=False, hoverinfo="skip",
-        cliponaxis=False,
-    ))
-
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-    # Colour legend row
-    st.markdown(f"""
-    <div style="display:flex;gap:1.5rem;align-items:center;justify-content:center;
-         font-size:0.72rem;color:{MUTED};margin-top:-0.5rem;margin-bottom:1rem">
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
-            background:{ACCENT};margin-right:5px;vertical-align:middle"></span>Optimal</span>
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
-            background:{BLUE};margin-right:5px;vertical-align:middle"></span>Normal</span>
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
-            background:{PURPLE};margin-right:5px;vertical-align:middle"></span>Low</span>
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
-            background:{ORANGE};margin-right:5px;vertical-align:middle"></span>Out of Range</span>
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
-            background:{CRIT};margin-right:5px;vertical-align:middle"></span>Critical</span>
-    </div>""", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
@@ -1007,28 +983,41 @@ def render_trends_table(trends: pd.DataFrame):
 # RENDER: PILL SLIDER  (biomarker range visualizer)
 # ─────────────────────────────────────────────
 
-def render_pill_slider(value: float, n_min, n_max, o_min, o_max, unit: str, status: str) -> str:
-    """Generate an HTML pill-track slider like the reference design."""
-    # Determine display range
+def render_pill_slider(value: float, n_min, o_min, n_max, o_max, unit: str, status: str) -> str:
+    """Generate an HTML pill-track slider. Handles one-sided ranges (<X or >X)."""
+    # Use optimal if available, fall back to normal
     ref_lo = o_min if o_min is not None else n_min
     ref_hi = o_max if o_max is not None else n_max
-    optimal = (o_min + o_max) / 2 if (o_min is not None and o_max is not None) else None
+    # Optimal midpoint for label
+    if o_min is not None and o_max is not None:
+        optimal = (o_min + o_max) / 2
+    elif o_max is not None:
+        optimal = o_max        # e.g. <100 — optimal IS the boundary
+    elif o_min is not None:
+        optimal = o_min
+    else:
+        optimal = None
 
+    # Need at least one boundary to draw
     if ref_lo is None and ref_hi is None:
         return ""
 
-    # Build range for track
+    # Build span for track — include value + both boundaries with padding
     all_vals = [v for v in [value, ref_lo, ref_hi, n_min, n_max] if v is not None]
     if not all_vals:
         return ""
+
     span_lo = min(all_vals) * 0.7
     span_hi = max(all_vals) * 1.35
+    # Ensure value is visible even if very far out of range
+    span_lo = min(span_lo, value * 0.7) if value > 0 else span_lo - abs(value) * 0.3
+    span_hi = max(span_hi, value * 1.35) if value > 0 else span_hi + abs(value) * 0.3
     if span_lo == span_hi:
         span_lo -= 1; span_hi += 1
     span = span_hi - span_lo
 
     def pct(v):
-        return max(2, min(96, (v - span_lo) / span * 100))
+        return max(3, min(95, (v - span_lo) / span * 100))
 
     # Value dot color
     s = str(status)
@@ -1039,46 +1028,59 @@ def render_pill_slider(value: float, n_min, n_max, o_min, o_max, unit: str, stat
 
     val_pct = pct(value)
 
-    # Optimal zone (dashed teal strip inside track)
+    # Optimal zone strip inside track
     opt_html = ""
     if ref_lo is not None and ref_hi is not None:
-        opt_l = pct(ref_lo)
+        opt_l = pct(ref_lo); opt_r = pct(ref_hi)
+        opt_html = (
+            f'<div style="position:absolute;left:{opt_l}%;width:{opt_r-opt_l}%;'
+            f'height:100%;background:rgba(78,205,196,0.15);'
+            f'border:1.5px dashed {ACCENT};border-radius:20px;box-sizing:border-box"></div>'
+        )
+    elif ref_hi is not None:  # <X — shade left of boundary
         opt_r = pct(ref_hi)
         opt_html = (
-            f'<div style="position:absolute;left:{opt_l}%;width:{opt_r - opt_l}%;'
+            f'<div style="position:absolute;left:3%;width:{opt_r-3}%;'
             f'height:100%;background:rgba(78,205,196,0.12);'
-            f'border:1.5px dashed {ACCENT};border-radius:20px;"></div>'
+            f'border:1.5px dashed {ACCENT};border-right:none;border-radius:20px 0 0 20px;box-sizing:border-box"></div>'
+        )
+    elif ref_lo is not None:  # >X — shade right of boundary
+        opt_l = pct(ref_lo)
+        opt_html = (
+            f'<div style="position:absolute;left:{opt_l}%;width:{95-opt_l}%;'
+            f'height:100%;background:rgba(78,205,196,0.12);'
+            f'border:1.5px dashed {ACCENT};border-left:none;border-radius:0 20px 20px 0;box-sizing:border-box"></div>'
         )
 
     # Optimal label below track
     opt_label_html = ""
     if optimal is not None:
         opt_pct = pct(optimal)
+        opt_str = f"< {optimal:.4g}" if (o_min is None and o_max is not None) else \
+                  f"> {optimal:.4g}" if (o_min is not None and o_max is None) else \
+                  f"{optimal:.4g}"
         opt_label_html = (
-            f'<div style="position:absolute;bottom:-16px;left:{opt_pct}%;'
-            f'transform:translateX(-50%);font-size:0.62rem;color:{ACCENT};white-space:nowrap">'
-            f'{optimal:.3g}</div>'
+            f'<div style="position:absolute;bottom:-17px;left:{opt_pct}%;'
+            f'transform:translateX(-50%);font-size:0.6rem;color:{ACCENT};'
+            f'white-space:nowrap;font-weight:500">{opt_str}</div>'
         )
 
-    # Previous value dot (grey) — we can't easily pass prev here so skip for now
-    val_label = f"{value:.4g}"
-    unit_str = f" {unit}" if unit else ""
+    val_str = f"{value:.4g}"
 
     html = f"""
-    <div style="position:relative;margin-top:24px;margin-bottom:20px;padding:0 4px">
-      <div style="position:relative;height:28px;background:{LIGHT};
-                  border:1.5px dashed {BORDER};border-radius:20px;overflow:visible">
+    <div style="position:relative;margin-top:22px;margin-bottom:22px;padding:0 8px">
+      <div style="position:relative;height:26px;background:{LIGHT};
+                  border:1.5px dashed {BORDER};border-radius:20px;overflow:visible;
+                  box-sizing:border-box">
         {opt_html}
-        <!-- Value dot -->
+        <div style="position:absolute;top:-18px;left:{val_pct}%;
+                    transform:translateX(-50%);font-size:0.68rem;
+                    font-weight:700;color:{dot_color};white-space:nowrap">{val_str}</div>
         <div style="position:absolute;top:50%;left:{val_pct}%;
                     transform:translate(-50%,-50%);
-                    width:22px;height:22px;border-radius:50%;
+                    width:20px;height:20px;border-radius:50%;
                     background:{dot_color};border:3px solid {SURFACE};
-                    box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:3"></div>
-        <!-- Value label above -->
-        <div style="position:absolute;top:-20px;left:{val_pct}%;
-                    transform:translateX(-50%);font-size:0.72rem;
-                    font-weight:600;color:{dot_color};white-space:nowrap">{val_label}</div>
+                    box-shadow:0 2px 6px rgba(0,0,0,0.18);z-index:3"></div>
         {opt_label_html}
       </div>
     </div>"""
@@ -1112,6 +1114,32 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
         try: return f"{float(v):.4g}"
         except: return str(v)
 
+    def _fmt_range(lo, hi) -> str:
+        """Format a range pair cleanly, handling one-sided ranges. Never shows nan."""
+        if lo is not None and hi is not None:
+            return f"{lo:.4g} – {hi:.4g}"
+        elif hi is not None:
+            return f"< {hi:.4g}"
+        elif lo is not None:
+            return f"> {lo:.4g}"
+        return "—"
+
+    def _opt_target(o_min, o_max, n_min, n_max):
+        """Return a single optimal target value. Use midpoint if range, else boundary."""
+        if o_min is not None and o_max is not None:
+            return (o_min + o_max) / 2
+        elif o_max is not None:   # e.g. <100 → target IS the max
+            return o_max
+        elif o_min is not None:   # e.g. >60 → target IS the min
+            return o_min
+        elif n_min is not None and n_max is not None:
+            return (n_min + n_max) / 2
+        elif n_max is not None:
+            return n_max
+        elif n_min is not None:
+            return n_min
+        return None
+
     for _, row in df.iterrows():
         test   = row["test_name"]
         val    = row["value"]
@@ -1123,84 +1151,87 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
         n_max = bm.get("normal_max")
         o_min = bm.get("optimal_min")
         o_max = bm.get("optimal_max")
+        hr_min = bm.get("high_risk_min")
+        hr_max = bm.get("high_risk_max")
 
         # Status color
         s = status
-        if   "CRITICAL" in s: val_color, bg_accent = CRIT,   f"rgba({int(CRIT[1:3],16)},{int(CRIT[3:5],16)},{int(CRIT[5:7],16)},0.07)"
-        elif "HIGH"     in s: val_color, bg_accent = ORANGE, f"rgba(249,123,90,0.06)"
-        elif "LOW"      in s: val_color, bg_accent = PURPLE, f"rgba(192,132,252,0.06)"
-        else:                  val_color, bg_accent = BLUE,   f"rgba(116,185,232,0.06)"
+        if   "CRITICAL" in s: val_color, bg_accent = CRIT,   "rgba(229,62,62,0.05)"
+        elif "HIGH"     in s: val_color, bg_accent = ORANGE, "rgba(249,123,90,0.05)"
+        elif "LOW"      in s: val_color, bg_accent = PURPLE, "rgba(192,132,252,0.05)"
+        else:                  val_color, bg_accent = BLUE,   "rgba(116,185,232,0.04)"
 
-        # Pill slider HTML
+        # Pill slider
         try:
             fval = float(val)
-            pill_html = render_pill_slider(fval, n_min, n_max, o_min, o_max, unit, status)
+            pill_html = render_pill_slider(fval, n_min, o_min, n_max, o_max, unit, status)
         except (ValueError, TypeError):
             pill_html = ""
 
-        # Range string
-        ref_lo = o_min if o_min is not None else n_min
-        ref_hi = o_max if o_max is not None else n_max
-        if ref_lo is not None and ref_hi is not None:
-            range_str = f"({ref_lo:.4g} – {ref_hi:.4g})"
-        elif ref_hi is not None:
-            range_str = f"(< {ref_hi:.4g})"
-        elif ref_lo is not None:
-            range_str = f"(> {ref_lo:.4g})"
-        else:
-            range_str = "—"
+        # Range strings — prefer optimal, fall back to normal
+        norm_str = _fmt_range(n_min, n_max)
+        opt_target = _opt_target(o_min, o_max, n_min, n_max)
 
-        # Optimal
-        if o_min is not None and o_max is not None:
-            opt_val = (o_min + o_max) / 2
+        # To Optimal calculation
+        if opt_target is not None:
             try:
-                fval = float(val)
-                diff = fval - opt_val
+                fval2 = float(val)
+                diff = fval2 - opt_target
+                # For "< X" type ranges, being below is good (diff < 0 = good)
                 to_opt = f"{'+' if diff > 0 else ''}{diff:.3g}"
-                opt_str = f"Optimal: {opt_val:.4g}"
-            except: to_opt = "—"; opt_str = ""
+                opt_label = f"Optimal: {opt_target:.4g}"
+            except: to_opt = "—"; opt_label = ""
         else:
-            to_opt = "—"; opt_str = ""
+            to_opt = "—"; opt_label = ""
+
+        # High risk range string
+        hr_str = _fmt_range(hr_min, hr_max) if (hr_min is not None or hr_max is not None) else "—"
 
         # Previous value
         prev = prev_values.get(test)
-        prev_str = f"{prev:.4g}" if prev is not None else "—"
-
-        # Left border color based on status
-        left_border = val_color
+        prev_str = fmt(prev) if prev is not None else "—"
 
         st.markdown(f"""
-        <div class="bm-row" style="border-left:3px solid {left_border};background:linear-gradient(135deg,{bg_accent} 0%,{SURFACE} 60%)">
-          <div style="display:grid;grid-template-columns:200px 1fr 120px 120px 120px;gap:1rem;align-items:start">
-            <div>
-              <div class="bm-row-name">⊕ {test}</div>
-              <div class="bm-row-unit">{unit}</div>
+        <div style="background:{SURFACE};border:1px solid {BORDER};border-left:4px solid {val_color};
+             border-radius:14px;padding:1.2rem 1.5rem 0.75rem;margin-bottom:0.75rem;
+             background:linear-gradient(135deg,{bg_accent} 0%,{SURFACE} 50%);
+             overflow:hidden;">
+          <!-- Top row: name + 4 data columns -->
+          <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:nowrap">
+            <!-- Left: name -->
+            <div style="min-width:140px;max-width:160px;flex-shrink:0">
+              <div style="font-size:0.92rem;font-weight:700;color:{TEXT};line-height:1.3">⊕ {test}</div>
+              <div style="font-size:0.72rem;color:{MUTED};margin-top:3px">{unit if unit else "—"}</div>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem">
+            <!-- Right: 4 columns in one row -->
+            <div style="flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;min-width:0">
               <div>
-                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">Current Value</div>
-                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px">
-                  <span style="font-size:1.35rem;font-weight:700;color:{val_color}">{fmt(val)}</span>
-                </div>
+                <div style="font-size:0.62rem;color:{MUTED};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Current</div>
+                <div style="font-size:1.4rem;font-weight:700;color:{val_color};line-height:1">{fmt(val)}</div>
+                <div style="height:1px;background:{BORDER};margin-top:6px"></div>
               </div>
               <div>
-                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">Normal Range</div>
-                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px;font-size:0.88rem;font-weight:500;color:{TEXT}">{range_str}</div>
+                <div style="font-size:0.62rem;color:{MUTED};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Normal Range</div>
+                <div style="font-size:0.88rem;font-weight:500;color:{TEXT};line-height:1.4">{norm_str}</div>
+                <div style="height:1px;background:{BORDER};margin-top:6px"></div>
               </div>
               <div>
-                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">To Optimal</div>
-                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px">
-                  <div style="font-size:0.88rem;font-weight:600;color:{TEXT}">{to_opt}</div>
-                  <div style="font-size:0.72rem;color:{MUTED}">{opt_str}</div>
-                </div>
+                <div style="font-size:0.62rem;color:{MUTED};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">To Optimal</div>
+                <div style="font-size:0.88rem;font-weight:600;color:{TEXT};line-height:1.3">{to_opt}</div>
+                <div style="font-size:0.68rem;color:{MUTED}">{opt_label}</div>
+                <div style="height:1px;background:{BORDER};margin-top:6px"></div>
               </div>
               <div>
-                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">Previous Value</div>
-                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px;font-size:0.88rem;color:{MUTED}">{prev_str}</div>
+                <div style="font-size:0.62rem;color:{MUTED};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Previous</div>
+                <div style="font-size:0.88rem;color:{MUTED};line-height:1">{prev_str}</div>
+                <div style="height:1px;background:{BORDER};margin-top:6px"></div>
               </div>
             </div>
           </div>
-          {pill_html}
+          <!-- Pill slider — full width, constrained -->
+          <div style="margin-top:0.5rem;overflow:hidden">
+            {pill_html}
+          </div>
         </div>""", unsafe_allow_html=True)
 
 
@@ -1509,7 +1540,7 @@ def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefi
     ]
 
     if not worsening.empty:
-        with st.expander(f"⚠️  {len(worsening)} worsening — abnormal & moving the wrong way",
+        with st.expander(f"{len(worsening)} biomarker(s) worsening — abnormal & moving wrong way",
                          expanded=True):
             for _, r in worsening.iterrows():
                 st.markdown(
@@ -1519,7 +1550,7 @@ def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefi
                 )
 
     if not improving.empty:
-        with st.expander(f"✅  {len(improving)} improving — still abnormal but trending better"):
+        with st.expander(f"{len(improving)} biomarker(s) improving — still abnormal but trending better"):
             for _, r in improving.iterrows():
                 st.markdown(
                     f"{status_pill(r['latest_status'])} &nbsp;"
@@ -1761,7 +1792,7 @@ if page == "Upload Reports":
                     with col_l:
                         render_summary_cards(snapshot)
                     with col_r:
-                        render_radial_overview(snapshot)
+                        render_radial_overview(snapshot, filter_status="all")
                     st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
                     view_mode_ul = st.radio(
                         "View as",
@@ -1827,7 +1858,7 @@ elif page == "Patient Profiles":
                 reverse=True,
             )
 
-            with st.expander("✏️  Manage Patient Data", expanded=False):
+            with st.expander("Manage Patient Data", expanded=False):
                 current_name = history["patient_name"].iloc[0]
 
                 st.markdown('<div class="section-label">Rename</div>', unsafe_allow_html=True)
@@ -1905,16 +1936,75 @@ elif page == "Patient Profiles":
                 # Two-column layout: summary stats left, radial overview right
                 col_left, col_right = st.columns([1, 1.3])
                 with col_left:
-                    render_summary_cards(snapshot)
+                    # Interactive summary cards with filter buttons
+                    total    = len(snapshot)
+                    critical = snapshot["status"].str.contains("CRITICAL", na=False).sum()
+                    abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
+                    normal   = total - abnormal
+                    oor      = abnormal - critical
+                    pct_ok   = int(normal / total * 100) if total else 0
+                    bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
+
+                    # Session state for filter
+                    filter_key = f"radial_filter_{selected_pid}"
+                    if filter_key not in st.session_state:
+                        st.session_state[filter_key] = "all"
+
+                    # Render clickable cards
+                    cards = [
+                        ("all",      total,    TEXT,   "Total Tests"),
+                        ("normal",   normal,   ACCENT, "Within Range"),
+                        ("oor",      oor,      ORANGE, "Out of Range"),
+                        ("critical", critical, CRIT,   "Critical"),
+                    ]
+                    st.markdown(f'<div class="summary-grid">', unsafe_allow_html=True)
+                    for fkey, num, color, label in cards:
+                        is_active = st.session_state[filter_key] == fkey
+                        border_style = f"2px solid {color}" if is_active else f"1px solid {BORDER}"
+                        shadow = f"0 4px 16px rgba(0,0,0,0.10)" if is_active else f"0 2px 8px rgba(0,0,0,0.03)"
+                        st.markdown(
+                            f'<div class="summary-card" style="border:{border_style};box-shadow:{shadow}">'
+                            f'<div class="num" style="color:{color}">{num}</div>'
+                            f'<div class="lbl">{label}</div></div>',
+                            unsafe_allow_html=True
+                        )
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                    # Button row for filter
+                    b1, b2, b3, b4 = st.columns(4)
+                    for col_btn, (fkey, _, color, _label) in zip([b1,b2,b3,b4], cards):
+                        with col_btn:
+                            if st.button("●", key=f"filter_{selected_pid}_{fkey}",
+                                         help=f"Show {_label} in chart"):
+                                st.session_state[filter_key] = fkey
+                                st.rerun()
+
+                    # Score bar
+                    st.markdown(f"""
+                    <div style="margin-bottom:1.5rem;margin-top:0.5rem">
+                      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                        <span style="font-size:0.78rem;color:{MUTED}">Within-Range Score</span>
+                        <span style="font-size:0.82rem;font-weight:600;color:{bar_col}">{pct_ok}%</span>
+                      </div>
+                      <div style="background:{BORDER};border-radius:8px;height:6px">
+                        <div style="width:{pct_ok}%;height:100%;background:{bar_col};
+                               border-radius:8px;transition:width 0.6s ease"></div>
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+
                 with col_right:
+                    active_filter = st.session_state.get(filter_key, "all")
+                    filter_labels = {"all": "All Biomarkers", "normal": "Within Range",
+                                     "oor": "Out of Range", "critical": "Critical Only"}
                     st.markdown(
-                        f'<div style="font-size:0.82rem;font-weight:600;color:{TEXT};'
-                        f'margin-bottom:0.25rem">Biomarker Overview</div>'
-                        f'<div style="font-size:0.75rem;color:{MUTED};margin-bottom:0.5rem">'
-                        f'Each spoke = one biomarker · dot position = value relative to optimal range</div>',
+                        f'<div style="font-size:0.82rem;font-weight:600;color:{TEXT};margin-bottom:2px">'
+                        f'Biomarker Overview · <span style="color:{MUTED};font-weight:400">'
+                        f'{filter_labels.get(active_filter,"All")}</span></div>'
+                        f'<div style="font-size:0.72rem;color:{MUTED};margin-bottom:0.5rem">'
+                        f'Dot position = value relative to optimal range · Click a card to filter</div>',
                         unsafe_allow_html=True
                     )
-                    render_radial_overview(snapshot)
+                    render_radial_overview(snapshot, filter_status=active_filter)
 
                 st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:1rem 0">', unsafe_allow_html=True)
 
