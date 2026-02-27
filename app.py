@@ -366,8 +366,51 @@ div[data-baseweb="tag"] span {{
 /* Widget label */
 [data-testid="stWidgetLabel"] svg {{ fill: {MUTED} !important; }}
 
-/* Hide Streamlit branding */
+/* Filter card buttons — make them invisible overlays under the card HTML */
+[data-testid="stButton"] button[kind="secondary"].filter-btn,
+button[data-testid*="flt_"] {{
+  opacity: 0 !important;
+  height: 0 !important;
+  padding: 0 !important;
+  margin: -4px 0 0 !important;
+  min-height: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 0 !important;
+  cursor: pointer !important;
+}}
+/* Ensure the "Filter" label text is hidden */
+[data-testid*="stButton"] button:has(+ [class*="flt_"]) {{
+  display: none;
+}}
 #MainMenu, footer, .stDeployButton {{ visibility: hidden; }}
+[data-testid="stHeader"] {{ display: none !important; }}
+[data-testid="stToolbar"] {{ display: none !important; }}
+[data-testid="stDecoration"] {{ display: none !important; }}
+[data-testid="stStatusWidget"] {{ display: none !important; }}
+.stAppToolbar {{ display: none !important; }}
+header[data-testid="stHeader"] {{ display: none !important; }}
+
+/* Fix Streamlit Material icon font fallback — prevents "keyboard_double_arrow_right" text */
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+.streamlit-expanderHeader p,
+.streamlit-expanderHeader span {{
+  font-family: 'DM Sans', sans-serif !important;
+}}
+/* The expand/collapse icon itself - hide text fallback, keep svg */
+[data-testid="stExpander"] summary svg + span,
+[data-testid="stExpanderToggleIcon"] {{
+  display: none !important;
+}}
+/* Streamlit 1.31+ uses material-symbols font for icons — load it */
+@font-face {{
+  font-family: 'Material Symbols Rounded';
+  font-style: normal;
+  font-weight: 100 700;
+  src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v215/syl0-zNym6-2Uc0-QCMAvzGDpWzNpoxzqtGckMXPBGwxHEB-ZT7TzPMB5FH6E-gVSrLlHQ.woff2) format('woff2');
+}}
 
 /* ── Custom component classes ── */
 .bip-header {{
@@ -770,16 +813,9 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         showlegend=False,
     ))
 
-    # ── Biomarker name labels at outer rim ──────────────────────────
-    fig.add_trace(go.Scatterpolar(
-        r=[1.16]*n, theta=angles_deg,
-        mode="text",
-        text=[t[:10]+"…" if len(t)>10 else t for t in df["test_name"]],
-        textfont=dict(size=8, color=MUTED, family="DM Sans"),
-        showlegend=False, hoverinfo="skip", cliponaxis=False,
-    ))
+    # ── NO biomarker name labels — too cluttered. Hover tooltip provides names. ──
 
-    # ── Zone text labels (right side) ───────────────────────────────
+    # ── Zone text labels (inside chart, right side) ──────────────────
     zone_annotations = [
         dict(text="Optimal", xref="paper", yref="paper", x=0.98, y=0.62,
              showarrow=False, font=dict(size=10, color=ACCENT, family="DM Sans"), xanchor="right"),
@@ -825,7 +861,7 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         ),
         paper_bgcolor=SURFACE,
         font=dict(color=TEXT, family="DM Sans"),
-        margin=dict(l=50, r=130, t=20, b=20),
+        margin=dict(l=20, r=130, t=20, b=20),
         height=400,
         showlegend=False,
         annotations=legend_annotations + zone_annotations,
@@ -1933,58 +1969,61 @@ elif page == "Patient Profiles":
             with tab1:
                 snapshot = get_snapshot(history)
 
-                # Two-column layout: summary stats left, radial overview right
+                # Compute stats
+                total    = len(snapshot)
+                critical = snapshot["status"].str.contains("CRITICAL", na=False).sum()
+                abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
+                normal   = total - abnormal
+                oor      = abnormal - critical
+                pct_ok   = int(normal / total * 100) if total else 0
+                bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
+
+                # Session state for radial filter
+                filter_key = f"radial_filter_{selected_pid}"
+                if filter_key not in st.session_state:
+                    st.session_state[filter_key] = "all"
+                active_filter = st.session_state[filter_key]
+
+                # Two-column layout
                 col_left, col_right = st.columns([1, 1.3])
+
                 with col_left:
-                    # Interactive summary cards with filter buttons
-                    total    = len(snapshot)
-                    critical = snapshot["status"].str.contains("CRITICAL", na=False).sum()
-                    abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
-                    normal   = total - abnormal
-                    oor      = abnormal - critical
-                    pct_ok   = int(normal / total * 100) if total else 0
-                    bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
-
-                    # Session state for filter
-                    filter_key = f"radial_filter_{selected_pid}"
-                    if filter_key not in st.session_state:
-                        st.session_state[filter_key] = "all"
-
-                    # Render clickable cards
+                    # Cards ARE the filter buttons — one st.button per card, styled as card
                     cards = [
                         ("all",      total,    TEXT,   "Total Tests"),
                         ("normal",   normal,   ACCENT, "Within Range"),
                         ("oor",      oor,      ORANGE, "Out of Range"),
                         ("critical", critical, CRIT,   "Critical"),
                     ]
-                    st.markdown(f'<div class="summary-grid">', unsafe_allow_html=True)
-                    for fkey, num, color, label in cards:
-                        is_active = st.session_state[filter_key] == fkey
-                        border_style = f"2px solid {color}" if is_active else f"1px solid {BORDER}"
-                        shadow = f"0 4px 16px rgba(0,0,0,0.10)" if is_active else f"0 2px 8px rgba(0,0,0,0.03)"
-                        st.markdown(
-                            f'<div class="summary-card" style="border:{border_style};box-shadow:{shadow}">'
-                            f'<div class="num" style="color:{color}">{num}</div>'
-                            f'<div class="lbl">{label}</div></div>',
-                            unsafe_allow_html=True
-                        )
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                    # Button row for filter
-                    b1, b2, b3, b4 = st.columns(4)
-                    for col_btn, (fkey, _, color, _label) in zip([b1,b2,b3,b4], cards):
+                    c1, c2, c3, c4 = st.columns(4)
+                    for col_btn, (fkey, num, color, label) in zip([c1,c2,c3,c4], cards):
+                        is_active = active_filter == fkey
+                        bg = f"rgba({','.join(str(int(color[i:i+2],16)) for i in (1,3,5))},0.08)" if is_active and color != TEXT else (LIGHT if is_active else SURFACE)
+                        border = f"2px solid {color}" if is_active else f"1px solid {BORDER}"
                         with col_btn:
-                            if st.button("●", key=f"filter_{selected_pid}_{fkey}",
-                                         help=f"Show {_label} in chart"):
+                            # Render styled card as HTML, then invisible button underneath
+                            st.markdown(f"""
+                            <div style="background:{bg};border:{border};border-radius:14px;
+                                 padding:1rem 0.5rem;text-align:center;cursor:pointer;
+                                 box-shadow:{'0 4px 14px rgba(0,0,0,0.10)' if is_active else '0 1px 4px rgba(0,0,0,0.04)'};
+                                 transition:all 0.15s;margin-bottom:2px">
+                              <div style="font-size:2rem;font-weight:700;color:{color};
+                                   line-height:1;letter-spacing:-1px">{num}</div>
+                              <div style="font-size:0.68rem;color:{MUTED};margin-top:5px;
+                                   font-weight:{'600' if is_active else '400'}">{label}</div>
+                            </div>""", unsafe_allow_html=True)
+                            if st.button("Filter", key=f"flt_{selected_pid}_{fkey}",
+                                         use_container_width=True,
+                                         help=f"Show {label} in radial chart"):
                                 st.session_state[filter_key] = fkey
                                 st.rerun()
 
                     # Score bar
                     st.markdown(f"""
-                    <div style="margin-bottom:1.5rem;margin-top:0.5rem">
-                      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-                        <span style="font-size:0.78rem;color:{MUTED}">Within-Range Score</span>
-                        <span style="font-size:0.82rem;font-weight:600;color:{bar_col}">{pct_ok}%</span>
+                    <div style="margin-top:0.75rem;margin-bottom:0.5rem">
+                      <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                        <span style="font-size:0.75rem;color:{MUTED}">Within-Range Score</span>
+                        <span style="font-size:0.8rem;font-weight:700;color:{bar_col}">{pct_ok}%</span>
                       </div>
                       <div style="background:{BORDER};border-radius:8px;height:6px">
                         <div style="width:{pct_ok}%;height:100%;background:{bar_col};
@@ -1993,18 +2032,41 @@ elif page == "Patient Profiles":
                     </div>""", unsafe_allow_html=True)
 
                 with col_right:
-                    active_filter = st.session_state.get(filter_key, "all")
                     filter_labels = {"all": "All Biomarkers", "normal": "Within Range",
                                      "oor": "Out of Range", "critical": "Critical Only"}
                     st.markdown(
-                        f'<div style="font-size:0.82rem;font-weight:600;color:{TEXT};margin-bottom:2px">'
-                        f'Biomarker Overview · <span style="color:{MUTED};font-weight:400">'
+                        f'<div style="font-size:0.85rem;font-weight:600;color:{TEXT};margin-bottom:1px">'
+                        f'Biomarker Map · <span style="color:{MUTED};font-weight:400;font-size:0.8rem">'
                         f'{filter_labels.get(active_filter,"All")}</span></div>'
-                        f'<div style="font-size:0.72rem;color:{MUTED};margin-bottom:0.5rem">'
-                        f'Dot position = value relative to optimal range · Click a card to filter</div>',
+                        f'<div style="font-size:0.72rem;color:{MUTED};margin-bottom:0.4rem;line-height:1.5">'
+                        f'Each dot is one biomarker. Dots in the <b style="color:{ACCENT}">teal inner ring</b> are optimal. '
+                        f'Dots in the <b style="color:{ORANGE}">outer ring</b> need attention. '
+                        f'Click a card on the left to highlight a group.</div>',
                         unsafe_allow_html=True
                     )
                     render_radial_overview(snapshot, filter_status=active_filter)
+
+                st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
+
+                # Toggle: cards vs table
+                view_mode = st.radio(
+                    "View as",
+                    ["Biomarker Cards", "Table"],
+                    horizontal=True,
+                    key=f"view_mode_{selected_pid}",
+                    label_visibility="collapsed",
+                )
+                if view_mode == "Biomarker Cards":
+                    render_biomarker_cards(snapshot, history=history)
+                else:
+                    render_results_table(snapshot)
+
+                st.download_button(
+                    "↓ Export Latest CSV",
+                    data=snapshot.to_csv(index=False).encode("utf-8"),
+                    file_name=f"{safe_name(history)}_latest.csv",
+                    mime="text/csv",
+                )
 
                 st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:1rem 0">', unsafe_allow_html=True)
 
