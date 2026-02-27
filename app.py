@@ -569,14 +569,172 @@ def load_biomarker_dictionary():
 biomarker_dictionary = load_biomarker_dictionary()
 
 
+# Build a comprehensive alias → canonical lookup used by bm_lookup for fallback
+@st.cache_data
+def _build_alias_index() -> dict:
+    """Map every alias + canonical name variant (lower, stripped) → canonical name."""
+    idx = {}
+    if biomarker_dictionary.empty:
+        return idx
+
+    for canonical in biomarker_dictionary.index:
+        # canonical itself (lower)
+        idx[canonical.lower().strip()] = canonical
+
+        # aliases column
+        row = biomarker_dictionary.loc[canonical]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        aliases_raw = row.get("aliases", "")
+        if pd.notna(aliases_raw) and str(aliases_raw).strip():
+            for a in str(aliases_raw).split(","):
+                a = a.strip().lower()
+                if a:
+                    idx[a] = canonical
+
+    # Hand-coded extras for common OCR variants not in the CSV aliases column
+    EXTRA = {
+        # CBC differentials
+        "abs. neutrophil count": "Absolute Neutrophil Count",
+        "abs neutrophil count":  "Absolute Neutrophil Count",
+        "abs.neutrophil count":  "Absolute Neutrophil Count",
+        "absolute neutrophils":  "Absolute Neutrophil Count",
+        "abs. lymphocyte count": "Absolute Lymphocyte Count",
+        "abs lymphocyte count":  "Absolute Lymphocyte Count",
+        "absolute lymphocytes":  "Absolute Lymphocyte Count",
+        "abs. monocyte count":   "Absolute Monocyte Count",
+        "abs monocyte count":    "Absolute Monocyte Count",
+        "absolute monocytes":    "Absolute Monocyte Count",
+        "abs. eosinophil count": "Absolute Eosinophil Count",
+        "abs eosinophil count":  "Absolute Eosinophil Count",
+        "absolute eosinophils":  "Absolute Eosinophil Count",
+        "abs. basophil count":   "Absolute Basophil Count",
+        "abs basophil count":    "Absolute Basophil Count",
+        "absolute basophils":    "Absolute Basophil Count",
+        # CBC main
+        "haemoglobin":           "Haemoglobin",
+        "hemoglobin":            "Haemoglobin",
+        "hgb":                   "Haemoglobin",
+        "hb":                    "Haemoglobin",
+        "total wbc count":       "Total WBC Count",
+        "wbc count":             "Total WBC Count",
+        "total leucocyte count": "Total WBC Count",
+        "tlc":                   "Total WBC Count",
+        "total wbc":             "Total WBC Count",
+        "platelet count":        "Platelet Count",
+        "platelets":             "Platelet Count",
+        "plt":                   "Platelet Count",
+        "rdw-cv":                "RDW-CV",
+        "rdw":                   "RDW-CV",
+        "esr":                   "ESR",
+        # Lipids
+        "total cholesterol":     "Total Cholesterol",
+        "hdl":                   "HDL Cholesterol",
+        "ldl":                   "LDL Cholesterol",
+        "tg":                    "Triglycerides",
+        "trigs":                 "Triglycerides",
+        "vldl":                  "VLDL Cholesterol",
+        "non-hdl cholesterol":   "Non HDL Cholesterol",
+        "non hdl-c":             "Non HDL Cholesterol",
+        # Liver
+        "ast":                   "AST (SGOT)",
+        "sgot":                  "AST (SGOT)",
+        "alt":                   "ALT (SGPT)",
+        "sgpt":                  "ALT (SGPT)",
+        "alp":                   "Alkaline Phosphatase",
+        "alkaline phosphatase":  "Alkaline Phosphatase",
+        "ggt":                   "Gamma GT",
+        "ggtp":                  "Gamma GT",
+        "total bilirubin":       "Bilirubin (Total)",
+        "bilirubin total":       "Bilirubin (Total)",
+        "direct bilirubin":      "Bilirubin (Direct)",
+        "bilirubin direct":      "Bilirubin (Direct)",
+        "indirect bilirubin":    "Bilirubin (Indirect)",
+        "albumin":               "Albumin",
+        "globulin":              "Globulin",
+        "total protein":         "Total Protein",
+        "a/g ratio":             "A/G Ratio",
+        # Kidney
+        "urea":                  "Urea (Serum)",
+        "blood urea":            "Urea (Serum)",
+        "creatinine":            "Creatinine (Serum)",
+        "serum creatinine":      "Creatinine (Serum)",
+        "uric acid":             "Uric Acid",
+        # Thyroid
+        "tsh":                   "TSH",
+        "ft3":                   "Free T3",
+        "free t3":               "Free T3",
+        "ft4":                   "Free T4",
+        "free t4":               "Free T4",
+        # Vitamins
+        "vitamin d":             "Vitamin D (25-OH)",
+        "25-oh vitamin d":       "Vitamin D (25-OH)",
+        "25(oh)d":               "Vitamin D (25-OH)",
+        "b12":                   "Vitamin B12",
+        # Glucose
+        "fasting glucose":       "Glucose (Fasting)",
+        "blood glucose fasting": "Glucose (Fasting)",
+        "fbs":                   "Glucose (Fasting)",
+        "hba1c":                 "HbA1c",
+        "glycated haemoglobin":  "HbA1c",
+        "pp glucose":            "Glucose (Post Prandial 2hr)",
+        "pbg":                   "Glucose (Post Prandial 2hr)",
+        # Inflammation
+        "hscrp":                 "hsCRP",
+        "hs-crp":                "hsCRP",
+        "c reactive protein":    "C Reactive Protein",
+        "crp":                   "C Reactive Protein",
+    }
+    for k, v in EXTRA.items():
+        idx.setdefault(k, v)
+
+    return idx
+
+
 def bm_lookup(test_name: str) -> dict:
-    """Return biomarker dict row as a plain dict, or {} if not found."""
-    if biomarker_dictionary.empty or test_name not in biomarker_dictionary.index:
+    """Return biomarker dict row as plain dict.
+    Falls back to: (1) alias index, (2) case-insensitive partial match."""
+    if biomarker_dictionary.empty:
         return {}
-    row = biomarker_dictionary.loc[test_name]
-    if isinstance(row, pd.DataFrame):
-        row = row.iloc[0]
-    return row.to_dict()
+
+    # 1. Exact match
+    if test_name in biomarker_dictionary.index:
+        row = biomarker_dictionary.loc[test_name]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        return row.to_dict()
+
+    alias_idx = _build_alias_index()
+
+    # 2. Alias index (lower-stripped)
+    key = test_name.lower().strip()
+    canonical = alias_idx.get(key)
+    if canonical and canonical in biomarker_dictionary.index:
+        row = biomarker_dictionary.loc[canonical]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        return row.to_dict()
+
+    # 3. Partial / substring match (test_name contains canonical or vice versa)
+    key_clean = key.replace("(", "").replace(")", "").replace(".", "").replace("-", " ")
+    for canonical in biomarker_dictionary.index:
+        c_clean = canonical.lower().replace("(", "").replace(")", "").replace(".", "").replace("-", " ")
+        if key_clean == c_clean:
+            row = biomarker_dictionary.loc[canonical]
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+            return row.to_dict()
+
+    # 4. Substring match (e.g. "Abs Eosinophil" found within "Absolute Eosinophil Count")
+    for canonical in biomarker_dictionary.index:
+        c_lower = canonical.lower()
+        if key in c_lower or c_lower in key:
+            row = biomarker_dictionary.loc[canonical]
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+            return row.to_dict()
+
+    return {}
 
 
 # ─────────────────────────────────────────────
@@ -868,7 +1026,7 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(color=TEXT, family="DM Sans")),
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 # ─────────────────────────────────────────────
@@ -946,7 +1104,7 @@ def render_results_table(snapshot: pd.DataFrame):
 
     st.dataframe(
         display,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Test":   st.column_config.TextColumn("Test",   width="large"),
@@ -999,7 +1157,7 @@ def render_trends_table(trends: pd.DataFrame):
 
     st.dataframe(
         display,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Test":         st.column_config.TextColumn("Test",         width="large"),
@@ -1423,7 +1581,7 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
             annotations=annotations,
         )
 
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
         # Zone legend
         if lo is not None or hi is not None:
@@ -1553,7 +1711,7 @@ def render_change_chart(trends: pd.DataFrame, key_prefix: str = ""):
         hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(color=TEXT, family="DM Sans")),
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 # ─────────────────────────────────────────────
@@ -1834,7 +1992,7 @@ if page == "Upload Reports":
                         "View as",
                         ["Biomarker Cards", "Table"],
                         horizontal=True,
-                        key=f"ul_view_{pid}",
+                        key=f"upload_view_{pid}",
                         label_visibility="collapsed",
                     )
                     if view_mode_ul == "Biomarker Cards":
@@ -2013,7 +2171,7 @@ elif page == "Patient Profiles":
                                    font-weight:{'600' if is_active else '400'}">{label}</div>
                             </div>""", unsafe_allow_html=True)
                             if st.button("Filter", key=f"flt_{selected_pid}_{fkey}",
-                                         use_container_width=True,
+                                         width="stretch",
                                          help=f"Show {label} in radial chart"):
                                 st.session_state[filter_key] = fkey
                                 st.rerun()
@@ -2068,21 +2226,6 @@ elif page == "Patient Profiles":
                     mime="text/csv",
                 )
 
-                st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:1rem 0">', unsafe_allow_html=True)
-
-                # Toggle: cards vs table
-                view_mode = st.radio(
-                    "View as",
-                    ["Biomarker Cards", "Table"],
-                    horizontal=True,
-                    key=f"view_mode_{selected_pid}",
-                    label_visibility="collapsed",
-                )
-                if view_mode == "Biomarker Cards":
-                    render_biomarker_cards(snapshot, history=history)
-                else:
-                    render_results_table(snapshot)
-
                 st.download_button(
                     "↓ Export Latest CSV",
                     data=snapshot.to_csv(index=False).encode("utf-8"),
@@ -2101,7 +2244,7 @@ elif page == "Patient Profiles":
                 disp["unit"] = disp["unit"].apply(clean_unit)
                 st.dataframe(
                     disp.sort_values(["report_date", "test_name"], ascending=[False, True]),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
                 st.download_button(
