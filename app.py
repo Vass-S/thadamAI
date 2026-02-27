@@ -74,201 +74,399 @@ RED_Z    = "rgba(249,123,90,0.08)"
 # ─────────────────────────────────────────────
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
-:root{{
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+
+/* Force color-scheme to light — defeats dark mode media queries */
+:root {{
+  color-scheme: light only !important;
   --bg:{BG};--surface:{SURFACE};--surface2:{SURFACE2};--border:{BORDER};
   --accent:{ACCENT};--blue:{BLUE};--purple:{PURPLE};--orange:{ORANGE};
   --green:{GREEN};--amber:{AMBER};--red:{RED};--crit:{CRIT};
   --text:{TEXT};--muted:{MUTED};--light:{LIGHT};
 }}
-html,body,[class*="css"]{{
-  background-color:var(--bg)!important;
-  color:var(--text)!important;
-  font-family:'DM Sans',sans-serif!important;
+
+/* ═══════════════════════════════════════════════════════════
+   NUCLEAR LIGHT MODE — defeats Streamlit dark theme entirely
+   Works by overriding BOTH the base styles AND the dark media query
+   ═══════════════════════════════════════════════════════════ */
+
+/* 1. Override dark-mode media query */
+@media (prefers-color-scheme: dark) {{
+  html, body, .stApp, [data-testid="stAppViewContainer"],
+  [data-testid="stAppViewBlockContainer"], section[data-testid="stMain"] {{
+    background-color: {BG} !important;
+    color: {TEXT} !important;
+  }}
 }}
-/* ── Sidebar ── */
-section[data-testid="stSidebar"]{{
-  background-color:var(--surface)!important;
-  border-right:1px solid var(--border)!important;
-  box-shadow:2px 0 12px rgba(0,0,0,0.04)!important;
+
+/* 2. Force white on every single Streamlit container — no exceptions */
+html, body, .stApp, .main,
+.block-container, [data-testid="stAppViewContainer"],
+[data-testid="stAppViewBlockContainer"],
+[data-testid="stMainBlockContainer"],
+[data-testid="block-container"],
+.appview-container, .main .block-container,
+section[data-testid="stMain"],
+section[data-testid="stMain"] > div,
+div[class*="block-container"],
+div[class*="appview"],
+div.stApp,
+.main > div,
+[data-testid="stVerticalBlock"],
+[data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stHorizontalBlock"],
+.element-container,
+.stMarkdown {{
+  background-color: {BG} !important;
+  color: {TEXT} !important;
+  font-family: 'DM Sans', sans-serif !important;
 }}
-section[data-testid="stSidebar"] *{{color:var(--text)!important;}}
-/* ── Header ── */
-.bip-header{{
-  display:flex;align-items:center;gap:14px;
-  padding-bottom:1.5rem;margin-bottom:2rem;
-  border-bottom:1px solid var(--border);
+
+/* 3. Force all text elements dark */
+p, span, label, h1, h2, h3, h4, h5, h6,
+.stMarkdown p, .stMarkdown span,
+[data-testid="stMarkdownContainer"],
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] span,
+[data-testid="stText"],
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] label,
+.stRadio label, .stSelectbox label,
+.stMultiSelect label, .stTextInput label,
+.stNumberInput label {{
+  color: {TEXT} !important;
+  font-family: 'DM Sans', sans-serif !important;
 }}
-.bip-header h1{{
-  font-size:1.55rem!important;font-weight:700!important;
-  color:var(--text)!important;margin:0!important;letter-spacing:-0.5px;
+
+/* Sidebar — white card */
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] .stSidebarContent {{
+  background-color: {SURFACE} !important;
+  border-right: 1px solid {BORDER} !important;
+  box-shadow: 2px 0 12px rgba(0,0,0,0.04) !important;
 }}
-.bip-header .sub{{
-  font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:3px;
-  text-transform:uppercase;color:var(--muted);
-  background:var(--light);border:1px solid var(--border);
-  padding:4px 12px;border-radius:20px;
+section[data-testid="stSidebar"] * {{
+  color: {TEXT} !important;
+  background-color: transparent !important;
 }}
-/* ── Section labels ── */
-.section-label{{
-  font-family:'DM Mono',monospace;font-size:0.57rem;letter-spacing:3px;
-  text-transform:uppercase;color:var(--muted);margin:1.5rem 0 0.75rem;
+section[data-testid="stSidebar"] .stRadio > div {{
+  background-color: transparent !important;
 }}
-/* ── Patient card ── */
-.patient-card{{
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:16px;padding:1.5rem 2rem;margin-bottom:1.75rem;
-  display:grid;grid-template-columns:repeat(4,1fr);gap:1.5rem;
-  box-shadow:0 2px 16px rgba(0,0,0,0.04);
+
+/* Radio buttons in sidebar */
+.stRadio [data-baseweb="radio"] label span,
+.stRadio label {{
+  color: {TEXT} !important;
 }}
-.patient-card .field label{{
-  font-family:'DM Mono',monospace;font-size:0.55rem;letter-spacing:2.5px;
-  text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px;
+
+/* Multiselect dropdown */
+div[data-baseweb="popover"],
+div[data-baseweb="menu"],
+div[data-baseweb="select"],
+div[data-baseweb="select"] div,
+[data-baseweb="base-input"],
+[data-baseweb="input"] {{
+  background-color: {SURFACE} !important;
+  color: {TEXT} !important;
 }}
-.patient-card .field value{{font-size:1.05rem;font-weight:600;color:var(--text);}}
-/* ── Summary cards ── */
-.summary-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;}}
-.summary-card{{
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:16px;padding:1.25rem 1.25rem;text-align:center;
-  transition:transform 0.15s,box-shadow 0.15s;
-  box-shadow:0 2px 8px rgba(0,0,0,0.03);
+div[data-baseweb="option"] {{
+  background-color: {SURFACE} !important;
+  color: {TEXT} !important;
 }}
-.summary-card:hover{{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.08);}}
-.summary-card .num{{font-size:2.4rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px;}}
-.summary-card .lbl{{font-size:0.73rem;color:var(--muted);margin-top:6px;font-weight:400;}}
-/* ── Callout ── */
-.callout{{
-  background:var(--light);border:1px solid var(--border);
-  border-left:3px solid var(--accent);border-radius:0 12px 12px 0;
-  padding:0.85rem 1.2rem;margin-top:0.5rem;font-size:0.82rem;line-height:1.75;color:var(--muted);
+div[data-baseweb="option"]:hover {{
+  background-color: {LIGHT} !important;
 }}
-.callout b{{color:var(--text);}}
-.callout-title{{
-  font-family:'DM Mono',monospace;font-size:0.55rem;letter-spacing:2px;
-  text-transform:uppercase;color:var(--accent);margin-bottom:5px;
+
+/* Selectbox, text input, number input */
+.stSelectbox > div > div,
+.stSelectbox [data-baseweb="select"] > div,
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+textarea {{
+  background-color: {SURFACE} !important;
+  border: 1px solid {BORDER} !important;
+  color: {TEXT} !important;
+  border-radius: 10px !important;
 }}
-/* ── Range legend ── */
-.range-legend{{display:inline-flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--muted);margin-bottom:0.4rem;}}
-.dot{{width:9px;height:9px;border-radius:50%;display:inline-block;}}
-/* ── Buttons ── */
-.stButton>button{{
-  background:var(--text)!important;border:none!important;color:#fff!important;
-  font-family:'DM Sans',sans-serif!important;font-size:0.82rem!important;
-  font-weight:500!important;border-radius:10px!important;
-  padding:0.45rem 1.2rem!important;transition:all 0.15s ease!important;
-  box-shadow:0 2px 8px rgba(26,26,46,0.15)!important;
+.stSelectbox > div > div:focus-within,
+.stTextInput > div > div:focus-within,
+.stNumberInput > div > div:focus-within {{
+  border-color: {ACCENT} !important;
+  box-shadow: 0 0 0 3px rgba(78,205,196,0.12) !important;
 }}
-.stButton>button:hover{{
-  background:var(--accent)!important;color:#fff!important;
-  box-shadow:0 4px 16px rgba(78,205,196,0.35)!important;transform:translateY(-1px)!important;
+
+/* Expander */
+.streamlit-expanderHeader,
+details summary,
+[data-testid="stExpander"] summary {{
+  background-color: {SURFACE} !important;
+  border: 1px solid {BORDER} !important;
+  border-radius: 12px !important;
+  font-size: 0.85rem !important;
+  color: {TEXT} !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03) !important;
 }}
-/* ── Tabs ── */
-.stTabs [data-baseweb="tab-list"]{{
-  border-bottom:1px solid var(--border)!important;gap:0;background:transparent!important;
+[data-testid="stExpander"] > div:last-child {{
+  background-color: {SURFACE} !important;
+  border: 1px solid {BORDER} !important;
+  border-top: none !important;
+  border-radius: 0 0 12px 12px !important;
 }}
-.stTabs [data-baseweb="tab"]{{
-  background:transparent!important;border-radius:0!important;color:var(--muted)!important;
-  font-family:'DM Sans',sans-serif!important;font-size:0.82rem!important;
-  font-weight:500!important;padding:0.75rem 1.6rem!important;
-  border-bottom:2px solid transparent!important;transition:color 0.15s!important;
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {{
+  border-bottom: 1px solid {BORDER} !important;
+  gap: 0 !important;
+  background: transparent !important;
 }}
-.stTabs [aria-selected="true"]{{color:var(--text)!important;border-bottom:2px solid var(--text)!important;}}
-.stTabs [data-baseweb="tab"]:hover{{color:var(--text)!important;}}
-/* ── File uploader ── */
-.stFileUploader>div{{
-  background:var(--surface)!important;border:2px dashed var(--border)!important;
-  border-radius:16px!important;
+.stTabs [data-baseweb="tab"] {{
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: {MUTED} !important;
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 0.82rem !important;
+  font-weight: 500 !important;
+  padding: 0.75rem 1.6rem !important;
+  border-bottom: 2px solid transparent !important;
+  transition: color 0.15s !important;
 }}
-.stFileUploader>div:hover{{border-color:var(--accent)!important;}}
-/* ── Data frame ── */
-.stDataFrame{{border:1px solid var(--border)!important;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.03)!important;}}
-/* ── Inputs ── */
-.stSelectbox>div>div,.stTextInput>div>div>input,.stNumberInput>div>div>input{{
-  background:var(--surface)!important;border:1px solid var(--border)!important;
-  color:var(--text)!important;border-radius:10px!important;
+.stTabs [aria-selected="true"] {{
+  color: {TEXT} !important;
+  border-bottom: 2px solid {ACCENT} !important;
 }}
-.stSelectbox>div>div:focus-within,.stTextInput>div>div:focus-within,.stNumberInput>div>div:focus-within{{
-  border-color:var(--accent)!important;box-shadow:0 0 0 3px rgba(78,205,196,0.12)!important;
+.stTabs [data-baseweb="tab"]:hover {{
+  color: {TEXT} !important;
 }}
-/* ── Expander ── */
-.streamlit-expanderHeader{{
-  background:var(--surface)!important;border:1px solid var(--border)!important;
-  border-radius:12px!important;font-size:0.85rem!important;
-  box-shadow:0 1px 4px rgba(0,0,0,0.03)!important;
+.stTabs [data-baseweb="tab-panel"] {{
+  background: transparent !important;
+  padding-top: 1rem !important;
 }}
-/* ── Download button ── */
-.stDownloadButton>button{{
-  background:transparent!important;border:1px solid var(--border)!important;
-  color:var(--muted)!important;font-family:'DM Mono',monospace!important;
-  font-size:0.66rem!important;border-radius:8px!important;
-  box-shadow:none!important;
+
+/* Buttons */
+.stButton > button {{
+  background-color: {TEXT} !important;
+  border: none !important;
+  color: #fff !important;
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 0.82rem !important;
+  font-weight: 500 !important;
+  border-radius: 10px !important;
+  padding: 0.45rem 1.2rem !important;
+  transition: all 0.15s ease !important;
+  box-shadow: 0 2px 8px rgba(26,26,46,0.15) !important;
 }}
-.stDownloadButton>button:hover{{border-color:var(--muted)!important;color:var(--text)!important;}}
-/* ── Progress ── */
-.stProgress>div>div>div>div{{background:var(--accent)!important;border-radius:4px!important;}}
-/* ── Plotly charts ── */
-.stPlotlyChart{{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.04)!important;}}
-/* ── Alerts ── */
-div[data-testid="stAlert"]{{border-radius:12px!important;}}
-div[data-testid="stSpinner"]>div{{border-top-color:var(--accent)!important;}}
-.stCaptionContainer p{{color:var(--muted)!important;font-size:0.78rem!important;}}
-/* ── Multiselect tags ── */
-div[data-baseweb="tag"]{{
-  background:rgba(78,205,196,0.1)!important;border:1px solid rgba(78,205,196,0.25)!important;
-  border-radius:6px!important;
+.stButton > button:hover {{
+  background-color: {ACCENT} !important;
+  color: #fff !important;
+  box-shadow: 0 4px 16px rgba(78,205,196,0.35) !important;
+  transform: translateY(-1px) !important;
 }}
-div[data-baseweb="tag"] span{{color:var(--accent)!important;}}
-[data-testid="stWidgetLabel"] svg{{fill:var(--muted)!important;}}
-#MainMenu,footer,.stDeployButton{{visibility:hidden;}}
-/* ── Biomarker pill slider (custom HTML component) ── */
-.pill-track{{
-  position:relative;height:32px;background:var(--light);
-  border:1.5px dashed var(--border);border-radius:20px;
-  margin:8px 0 4px;
+.stButton > button[kind="primary"] {{
+  background-color: {ACCENT} !important;
+  color: #fff !important;
 }}
-.pill-optimal{{
-  position:absolute;height:100%;background:rgba(78,205,196,0.15);
-  border:1.5px dashed {ACCENT};border-radius:20px;
+
+/* Download button */
+.stDownloadButton > button {{
+  background: transparent !important;
+  border: 1px solid {BORDER} !important;
+  color: {MUTED} !important;
+  font-family: 'DM Mono', monospace !important;
+  font-size: 0.66rem !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
 }}
-.pill-dot{{
-  position:absolute;top:50%;transform:translate(-50%,-50%);
-  width:22px;height:22px;border-radius:50%;border:2.5px solid var(--surface);
-  box-shadow:0 2px 8px rgba(0,0,0,0.15);z-index:2;
+.stDownloadButton > button:hover {{
+  border-color: {MUTED} !important;
+  color: {TEXT} !important;
+  background: {LIGHT} !important;
 }}
-.pill-label{{
-  position:absolute;top:-18px;transform:translateX(-50%);
-  font-size:0.72rem;font-weight:600;white-space:nowrap;
+
+/* File uploader */
+.stFileUploader > div {{
+  background: {SURFACE} !important;
+  border: 2px dashed {BORDER} !important;
+  border-radius: 16px !important;
 }}
-.pill-sublabel{{
-  position:absolute;bottom:-18px;transform:translateX(-50%);
-  font-size:0.62rem;color:var(--muted);white-space:nowrap;
+.stFileUploader > div:hover {{
+  border-color: {ACCENT} !important;
 }}
-/* ── Biomarker row card ── */
-.bm-row{{
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:14px;padding:1.1rem 1.4rem;margin-bottom:0.75rem;
-  box-shadow:0 1px 6px rgba(0,0,0,0.03);
+.stFileUploader label, .stFileUploader span,
+[data-testid="stFileUploadDropzone"] * {{
+  color: {MUTED} !important;
+  background: transparent !important;
 }}
-.bm-row-name{{font-size:0.95rem;font-weight:600;color:var(--text);}}
-.bm-row-unit{{font-size:0.75rem;color:var(--muted);margin-top:1px;}}
-.bm-row-value{{font-size:1.5rem;font-weight:700;}}
-.bm-row-meta{{font-size:0.78rem;color:var(--muted);}}
-/* ── Sidebar nav ── */
-.nav-item{{
-  padding:0.5rem 0.75rem;border-radius:10px;margin-bottom:2px;
-  font-size:0.85rem;font-weight:500;cursor:pointer;
-  transition:background 0.15s;color:var(--muted);
+
+/* Data frames / tables */
+.stDataFrame {{
+  border: 1px solid {BORDER} !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.03) !important;
 }}
-.nav-item:hover{{background:var(--light);color:var(--text);}}
-.nav-item.active{{background:var(--light);color:var(--text);font-weight:600;}}
+[data-testid="stDataFrame"] > div {{
+  background: {SURFACE} !important;
+}}
+
+/* Plotly chart wrapper */
+.stPlotlyChart {{
+  border: 1px solid {BORDER} !important;
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04) !important;
+  background: {SURFACE} !important;
+}}
+.js-plotly-plot, .plotly, .plot-container {{
+  background: {SURFACE} !important;
+}}
+
+/* Progress bar */
+.stProgress > div > div > div > div {{
+  background: {ACCENT} !important;
+  border-radius: 4px !important;
+}}
+.stProgress > div > div > div {{
+  background: {BORDER} !important;
+  border-radius: 4px !important;
+}}
+
+/* Alerts */
+div[data-testid="stAlert"] {{
+  border-radius: 12px !important;
+  background: {SURFACE} !important;
+}}
+div[data-baseweb="notification"] {{
+  background: {SURFACE} !important;
+  border-radius: 12px !important;
+}}
+
+/* Spinner */
+div[data-testid="stSpinner"] > div {{
+  border-top-color: {ACCENT} !important;
+}}
+
+/* Caption */
+.stCaptionContainer p, [data-testid="stCaptionContainer"] p {{
+  color: {MUTED} !important;
+  font-size: 0.78rem !important;
+}}
+
+/* Multiselect tags */
+div[data-baseweb="tag"] {{
+  background: rgba(78,205,196,0.1) !important;
+  border: 1px solid rgba(78,205,196,0.25) !important;
+  border-radius: 6px !important;
+}}
+div[data-baseweb="tag"] span {{
+  color: {ACCENT} !important;
+}}
+
+/* Widget label */
+[data-testid="stWidgetLabel"] svg {{ fill: {MUTED} !important; }}
+
+/* Hide Streamlit branding */
+#MainMenu, footer, .stDeployButton {{ visibility: hidden; }}
+
+/* ── Custom component classes ── */
+.bip-header {{
+  display: flex; align-items: center; gap: 14px;
+  padding-bottom: 1.5rem; margin-bottom: 2rem;
+  border-bottom: 1px solid {BORDER};
+}}
+.bip-header h1 {{
+  font-size: 1.55rem !important; font-weight: 700 !important;
+  color: {TEXT} !important; margin: 0 !important; letter-spacing: -0.5px;
+}}
+.bip-header .sub {{
+  font-family: 'DM Mono', monospace; font-size: 0.6rem; letter-spacing: 3px;
+  text-transform: uppercase; color: {MUTED};
+  background: {LIGHT}; border: 1px solid {BORDER};
+  padding: 4px 12px; border-radius: 20px;
+}}
+.section-label {{
+  font-family: 'DM Mono', monospace; font-size: 0.57rem; letter-spacing: 3px;
+  text-transform: uppercase; color: {MUTED}; margin: 1.5rem 0 0.75rem;
+}}
+.patient-card {{
+  background: {SURFACE}; border: 1px solid {BORDER};
+  border-radius: 16px; padding: 1.5rem 2rem; margin-bottom: 1.75rem;
+  display: grid; grid-template-columns: repeat(4,1fr); gap: 1.5rem;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.04);
+}}
+.patient-card .field label {{
+  font-family: 'DM Mono', monospace; font-size: 0.55rem; letter-spacing: 2.5px;
+  text-transform: uppercase; color: {MUTED}; display: block; margin-bottom: 6px;
+}}
+.patient-card .field value {{ font-size: 1.05rem; font-weight: 600; color: {TEXT}; }}
+.summary-grid {{ display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem; margin-bottom: 1.5rem; }}
+.summary-card {{
+  background: {SURFACE}; border: 1px solid {BORDER};
+  border-radius: 16px; padding: 1.25rem; text-align: center;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+}}
+.summary-card:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }}
+.summary-card .num {{ font-size: 2.4rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1px; }}
+.summary-card .lbl {{ font-size: 0.73rem; color: {MUTED}; margin-top: 6px; font-weight: 400; }}
+.callout {{
+  background: {LIGHT}; border: 1px solid {BORDER};
+  border-left: 3px solid {ACCENT}; border-radius: 0 12px 12px 0;
+  padding: 0.85rem 1.2rem; margin-top: 0.5rem; font-size: 0.82rem; line-height: 1.75; color: {MUTED};
+}}
+.callout b {{ color: {TEXT}; }}
+.callout-title {{
+  font-family: 'DM Mono', monospace; font-size: 0.55rem; letter-spacing: 2px;
+  text-transform: uppercase; color: {ACCENT}; margin-bottom: 5px;
+}}
+.range-legend {{ display: inline-flex; align-items: center; gap: 6px; font-size: 0.7rem; color: {MUTED}; margin-bottom: 0.4rem; }}
+.dot {{ width: 9px; height: 9px; border-radius: 50%; display: inline-block; }}
+.bm-row {{
+  background: {SURFACE}; border: 1px solid {BORDER};
+  border-radius: 14px; padding: 1.1rem 1.4rem; margin-bottom: 0.75rem;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.03);
+}}
+.bm-row-name {{ font-size: 0.95rem; font-weight: 600; color: {TEXT}; }}
+.bm-row-unit {{ font-size: 0.75rem; color: {MUTED}; margin-top: 1px; }}
+.pill-track {{
+  position: relative; height: 32px; background: {LIGHT};
+  border: 1.5px dashed {BORDER}; border-radius: 20px;
+  margin: 8px 0 4px;
+}}
+.pill-optimal {{
+  position: absolute; height: 100%; background: rgba(78,205,196,0.15);
+  border: 1.5px dashed {ACCENT}; border-radius: 20px;
+}}
+.pill-dot {{
+  position: absolute; top: 50%; transform: translate(-50%,-50%);
+  width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid {SURFACE};
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 2;
+}}
 </style>
 """, unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────────
-# BIOMARKER DICTIONARY  (cached — loaded once)
-# ─────────────────────────────────────────────
+# JS: Force light color-scheme — defeats Streamlit's dark mode detection
+st.markdown("""
+<script>
+(function() {
+  try {
+    var meta = document.querySelector('meta[name="color-scheme"]');
+    if (!meta) { meta = document.createElement('meta'); meta.name = 'color-scheme'; document.head.appendChild(meta); }
+    meta.content = 'light';
+    var origMM = window.matchMedia;
+    window.matchMedia = function(q) {
+      if (q && q.includes('prefers-color-scheme')) {
+        return { matches: q.includes('light'), media: q, addListener:function(){}, removeListener:function(){}, addEventListener:function(){}, removeEventListener:function(){} };
+      }
+      return origMM.apply(this, arguments);
+    };
+    document.documentElement.style.setProperty('background-color','#f7f8fc','important');
+    if (document.body) document.body.style.setProperty('background-color','#f7f8fc','important');
+  } catch(e) {}
+})();
+</script>
+""", unsafe_allow_html=True)
 
 def _parse_range(s):
     if pd.isna(s):
@@ -432,6 +630,232 @@ def render_patient_card(history: pd.DataFrame):
       <div class="field"><label>Gender</label><value>{g_str}</value></div>
       <div class="field"><label>Age</label><value>{age_str}</value></div>
       <div class="field"><label>Reports</label><value>{n}  <span style="font-size:0.75rem;color:{MUTED};font-weight:400">· last {last_dt}</span></value></div>
+    </div>""", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+# RENDER: RADIAL BIOMARKER OVERVIEW
+# Inspired by Image 1 — polar scatter showing
+# all biomarkers, out-of-range highlighted
+# ─────────────────────────────────────────────
+
+def render_radial_overview(snapshot: pd.DataFrame):
+    """Polar scatter chart: each biomarker on its own spoke, dot = value,
+    colored by status (teal=optimal, blue=normal, lavender=low, coral=high/critical).
+    Centre shows count of out-of-range biomarkers."""
+    import math
+
+    df = snapshot.copy()
+    df["unit"] = df["unit"].apply(clean_unit)
+    df["_ord"] = df["status"].apply(_status_sort)
+    df = df.sort_values(["_ord", "test_name"]).reset_index(drop=True)
+
+    n = len(df)
+    if n == 0:
+        return
+
+    oor_count = df["status"].str.contains("HIGH|LOW", na=False).sum()
+
+    # For each biomarker, compute a normalised radial position (0–1)
+    # where 0.5 = exactly on normal boundary, >0.5 = above, <0.5 = below
+    radii = []
+    for _, row in df.iterrows():
+        bm = bm_lookup(row["test_name"])
+        lo = bm.get("optimal_min") or bm.get("normal_min")
+        hi = bm.get("optimal_max") or bm.get("normal_max")
+        try:
+            val = float(row["value"])
+        except (ValueError, TypeError):
+            radii.append(0.5)
+            continue
+
+        if lo is not None and hi is not None and hi > lo:
+            mid = (lo + hi) / 2
+            half_range = (hi - lo) / 2
+            # normalise: 0.5 = mid of range
+            r = 0.5 + (val - mid) / (hi - lo)
+            r = max(0.08, min(0.97, r))
+        elif hi is not None and hi > 0:
+            r = min(0.97, val / hi)
+            r = max(0.08, r)
+        elif lo is not None and lo > 0:
+            r = min(0.97, val / (lo * 2))
+            r = max(0.08, r)
+        else:
+            r = 0.5
+        radii.append(r)
+
+    # Assign angles evenly
+    angles_deg = [i * 360 / n for i in range(n)]
+
+    # Colors by status
+    def dot_color(s):
+        s = str(s)
+        if "CRITICAL" in s: return CRIT
+        if "HIGH"     in s: return ORANGE
+        if "LOW"      in s: return PURPLE
+        return ACCENT
+
+    colors  = [dot_color(s) for s in df["status"]]
+    sizes   = [16 if "CRITICAL" in str(s) or "HIGH" in str(s) else 12 for s in df["status"]]
+
+    def fmt_val(v):
+        try: return f"{float(v):.4g}"
+        except: return str(v)
+
+    hover = [
+        f"<b>{row['test_name']}</b><br>{fmt_val(row['value'])} {row['unit']}<br>{row.get('status','')}"
+        for _, row in df.iterrows()
+    ]
+
+    fig = go.Figure()
+
+    # ── Concentric reference circles (dashed) ──
+    for r_frac, label in [(0.3, ""), (0.5, "Optimal"), (0.75, ""), (1.0, "Out of Range")]:
+        theta_ring = list(range(0, 361, 5))
+        r_ring     = [r_frac] * len(theta_ring)
+        fig.add_trace(go.Scatterpolar(
+            r=r_ring, theta=theta_ring,
+            mode="lines",
+            line=dict(color=BORDER if r_frac != 0.5 else ACCENT,
+                      width=1 if r_frac != 0.5 else 1.2,
+                      dash="dot" if r_frac != 0.5 else "dash"),
+            showlegend=False, hoverinfo="skip",
+        ))
+
+    # ── Highlight out-of-range sector backgrounds ──
+    for i, (_, row) in enumerate(df.iterrows()):
+        s = str(row["status"])
+        if "HIGH" in s or "LOW" in s or "CRITICAL" in s:
+            bg_color = f"rgba(249,123,90,0.07)" if "HIGH" in s or "CRITICAL" in s else "rgba(192,132,252,0.07)"
+            spread = 360 / n
+            theta_sector = [angles_deg[i] - spread/2, angles_deg[i] - spread/2,
+                            angles_deg[i] + spread/2, angles_deg[i] + spread/2]
+            r_sector = [0, 1.05, 1.05, 0]
+            fig.add_trace(go.Scatterpolar(
+                r=r_sector, theta=theta_sector,
+                fill="toself",
+                fillcolor=bg_color,
+                line=dict(width=0),
+                showlegend=False, hoverinfo="skip",
+            ))
+
+    # ── Data dots ──
+    fig.add_trace(go.Scatterpolar(
+        r=radii,
+        theta=angles_deg,
+        mode="markers",
+        marker=dict(
+            color=colors,
+            size=sizes,
+            line=dict(color=SURFACE, width=2.5),
+        ),
+        text=df["test_name"],
+        customdata=hover,
+        hovertemplate="%{customdata}<extra></extra>",
+        showlegend=False,
+    ))
+
+    # ── Centre annotation ──
+    oor_color = ORANGE if oor_count > 0 else ACCENT
+    fig.add_annotation(
+        text=f"<b style='font-size:2.2rem;color:{TEXT}'>{oor_count:02d}</b>",
+        xref="paper", yref="paper", x=0.5, y=0.52,
+        showarrow=False, font=dict(size=28, color=TEXT, family="DM Sans"),
+        align="center",
+    )
+    fig.add_annotation(
+        text=f"Biomarkers<br>Out of Range" if oor_count != 1 else "Biomarker<br>Out of Range",
+        xref="paper", yref="paper", x=0.5, y=0.42,
+        showarrow=False, font=dict(size=11, color=MUTED, family="DM Sans"),
+        align="center",
+    )
+
+    # ── Legend dots (top-right) ──
+    legend_items = [
+        ("Optimal", ACCENT), ("Normal", BLUE),
+        ("Out of Range", ORANGE), ("Low", PURPLE),
+    ]
+
+    fig.update_layout(
+        polar=dict(
+            bgcolor=SURFACE,
+            radialaxis=dict(
+                visible=False, range=[0, 1.1],
+                showticklabels=False, showgrid=False, showline=False,
+            ),
+            angularaxis=dict(
+                tickmode="array",
+                tickvals=angles_deg,
+                ticktext=["" for _ in df["test_name"]],  # hide names — too cluttered
+                showgrid=True,
+                gridcolor=BORDER,
+                gridwidth=1,
+                linecolor=BORDER,
+                tickfont=dict(size=9, color=MUTED, family="DM Sans"),
+                direction="clockwise",
+                rotation=90,
+            ),
+        ),
+        paper_bgcolor=SURFACE,
+        plot_bgcolor=SURFACE,
+        font=dict(color=TEXT, family="DM Sans"),
+        margin=dict(l=60, r=120, t=40, b=40),
+        height=420,
+        showlegend=False,
+        annotations=[
+            dict(
+                text=f'<span style="color:{c}">●</span> {lbl}',
+                xref="paper", yref="paper",
+                x=1.01, y=0.9 - i * 0.07,
+                showarrow=False,
+                font=dict(size=11, color=TEXT, family="DM Sans"),
+                xanchor="left",
+            )
+            for i, (lbl, c) in enumerate(legend_items)
+        ] + [
+            # Re-add centre labels (annotations list overwrites add_annotation)
+            dict(
+                text=f"<b>{oor_count:02d}</b>",
+                xref="paper", yref="paper", x=0.5, y=0.55,
+                showarrow=False, font=dict(size=30, color=TEXT, family="DM Sans"), align="center",
+            ),
+            dict(
+                text="Biomarkers<br>Out of Range",
+                xref="paper", yref="paper", x=0.5, y=0.43,
+                showarrow=False, font=dict(size=11, color=MUTED, family="DM Sans"), align="center",
+            ),
+        ],
+        hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(color=TEXT, family="DM Sans")),
+    )
+
+    # Tick labels for biomarker names — use a separate scatter at r=1.08 for readability
+    label_r  = [1.12] * n
+    fig.add_trace(go.Scatterpolar(
+        r=label_r, theta=angles_deg,
+        mode="text",
+        text=[t[:12] + "…" if len(t) > 12 else t for t in df["test_name"]],
+        textfont=dict(size=8, color=MUTED, family="DM Sans"),
+        showlegend=False, hoverinfo="skip",
+        cliponaxis=False,
+    ))
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # Colour legend row
+    st.markdown(f"""
+    <div style="display:flex;gap:1.5rem;align-items:center;justify-content:center;
+         font-size:0.72rem;color:{MUTED};margin-top:-0.5rem;margin-bottom:1rem">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+            background:{ACCENT};margin-right:5px;vertical-align:middle"></span>Optimal</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+            background:{BLUE};margin-right:5px;vertical-align:middle"></span>Normal</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+            background:{PURPLE};margin-right:5px;vertical-align:middle"></span>Low</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+            background:{ORANGE};margin-right:5px;vertical-align:middle"></span>Out of Range</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+            background:{CRIT};margin-right:5px;vertical-align:middle"></span>Critical</span>
     </div>""", unsafe_allow_html=True)
 
 
@@ -1333,7 +1757,12 @@ if page == "Upload Reports":
                 tab1, tab2 = st.tabs(["Latest Results", "Trends"])
                 with tab1:
                     snapshot = get_snapshot(history)
-                    render_summary_cards(snapshot)
+                    col_l, col_r = st.columns([1, 1.3])
+                    with col_l:
+                        render_summary_cards(snapshot)
+                    with col_r:
+                        render_radial_overview(snapshot)
+                    st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
                     view_mode_ul = st.radio(
                         "View as",
                         ["Biomarker Cards", "Table"],
@@ -1360,7 +1789,7 @@ if page == "Upload Reports":
         st.markdown(f"""
         <div style="text-align:center;padding:4rem 2rem">
           <div style="font-size:3rem;margin-bottom:1rem">📄</div>
-          <div style="font-size:1.05rem;font-weight:600;color:#fff;margin-bottom:0.5rem">
+          <div style="font-size:1.05rem;font-weight:600;color:{TEXT};margin-bottom:0.5rem">
             Drop PDF lab reports to begin</div>
           <div style="font-size:0.82rem;color:{MUTED}">
             Supports Hitech, Kauvery, Metropolis and similar Indian labs.</div>
@@ -1472,7 +1901,22 @@ elif page == "Patient Profiles":
 
             with tab1:
                 snapshot = get_snapshot(history)
-                render_summary_cards(snapshot)
+
+                # Two-column layout: summary stats left, radial overview right
+                col_left, col_right = st.columns([1, 1.3])
+                with col_left:
+                    render_summary_cards(snapshot)
+                with col_right:
+                    st.markdown(
+                        f'<div style="font-size:0.82rem;font-weight:600;color:{TEXT};'
+                        f'margin-bottom:0.25rem">Biomarker Overview</div>'
+                        f'<div style="font-size:0.75rem;color:{MUTED};margin-bottom:0.5rem">'
+                        f'Each spoke = one biomarker · dot position = value relative to optimal range</div>',
+                        unsafe_allow_html=True
+                    )
+                    render_radial_overview(snapshot)
+
+                st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:1rem 0">', unsafe_allow_html=True)
 
                 # Toggle: cards vs table
                 view_mode = st.radio(
