@@ -47,80 +47,221 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# PALETTE  — edit once, reflected everywhere
+# PALETTE  — Clean clinical white design
+# Inspired by InoAge / longevity health platforms
 # ─────────────────────────────────────────────
-BG       = "#090c12"
-SURFACE  = "#0f1520"
-SURFACE2 = "#151e2e"
-BORDER   = "#1e2d42"
-ACCENT   = "#22d3c8"
-GREEN    = "#22c55e"
-AMBER    = "#f59e0b"
-RED      = "#ef4444"
-CRIT     = "#ff1a1a"
-TEXT     = "#e2e8f0"
-MUTED    = "#64748b"
-GREEN_Z  = "rgba(34,197,94,0.11)"
-AMBER_Z  = "rgba(245,158,11,0.11)"
-RED_Z    = "rgba(239,68,68,0.11)"
+BG       = "#f8f8f8"
+SURFACE  = "#ffffff"
+SURFACE2 = "#f4f4f6"
+BORDER   = "#e8e8ee"
+ACCENT   = "#4ecdc4"       # teal — "Optimized"
+BLUE     = "#74b9e8"       # blue — "Balanced"
+PURPLE   = "#c084fc"       # lavender/purple — "Moderate"
+ORANGE   = "#f97b5a"       # coral/orange — "Out of Range"
+GREEN    = "#4ecdc4"       # same as accent for "normal"
+AMBER    = "#f5a623"       # warm amber for "LOW"
+RED      = "#f97b5a"       # coral for "HIGH"
+CRIT     = "#e53e3e"       # deep red for "CRITICAL"
+TEXT     = "#1a1a2e"
+MUTED    = "#8a8aaa"
+LIGHT    = "#f0f0f8"
+GREEN_Z  = "rgba(78,205,196,0.08)"
+AMBER_Z  = "rgba(245,166,35,0.08)"
+RED_Z    = "rgba(249,123,90,0.08)"
 
 # ─────────────────────────────────────────────
 # CUSTOM CSS
 # ─────────────────────────────────────────────
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-:root{{--bg:{BG};--surface:{SURFACE};--surface2:{SURFACE2};--border:{BORDER};--accent:{ACCENT};--green:{GREEN};--amber:{AMBER};--red:{RED};--crit:{CRIT};--text:{TEXT};--muted:{MUTED};}}
-html,body,[class*="css"]{{background-color:var(--bg)!important;color:var(--text)!important;font-family:'Inter',sans-serif!important;}}
-section[data-testid="stSidebar"]{{background-color:var(--surface)!important;border-right:1px solid var(--border)!important;}}
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+:root{{
+  --bg:{BG};--surface:{SURFACE};--surface2:{SURFACE2};--border:{BORDER};
+  --accent:{ACCENT};--blue:{BLUE};--purple:{PURPLE};--orange:{ORANGE};
+  --green:{GREEN};--amber:{AMBER};--red:{RED};--crit:{CRIT};
+  --text:{TEXT};--muted:{MUTED};--light:{LIGHT};
+}}
+html,body,[class*="css"]{{
+  background-color:var(--bg)!important;
+  color:var(--text)!important;
+  font-family:'DM Sans',sans-serif!important;
+}}
+/* ── Sidebar ── */
+section[data-testid="stSidebar"]{{
+  background-color:var(--surface)!important;
+  border-right:1px solid var(--border)!important;
+  box-shadow:2px 0 12px rgba(0,0,0,0.04)!important;
+}}
 section[data-testid="stSidebar"] *{{color:var(--text)!important;}}
-.bip-header{{display:flex;align-items:center;gap:14px;padding-bottom:1.25rem;margin-bottom:1.75rem;border-bottom:1px solid var(--border);}}
-.bip-header h1{{font-size:1.65rem!important;font-weight:700!important;color:#fff!important;margin:0!important;letter-spacing:-0.4px;}}
-.bip-header .sub{{font-family:'JetBrains Mono',monospace;font-size:0.62rem;letter-spacing:3px;text-transform:uppercase;color:var(--accent);background:rgba(34,211,200,0.08);border:1px solid rgba(34,211,200,0.2);padding:3px 10px;border-radius:20px;}}
-.section-label{{font-family:'JetBrains Mono',monospace;font-size:0.58rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin:1.5rem 0 0.6rem;}}
-.patient-card{{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);padding:1.25rem 1.5rem;border-radius:8px;margin-bottom:1.5rem;display:grid;grid-template-columns:repeat(4,1fr);gap:1.25rem;}}
-.patient-card .field label{{font-family:'JetBrains Mono',monospace;font-size:0.56rem;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:5px;}}
-.patient-card .field value{{font-size:1.05rem;font-weight:600;color:#fff;}}
-.summary-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1.25rem;}}
-.summary-card{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem 1.1rem;text-align:center;transition:transform 0.15s,border-color 0.15s;}}
-.summary-card:hover{{border-color:var(--accent);transform:translateY(-1px);}}
-.summary-card .num{{font-size:2.2rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;}}
-.summary-card .lbl{{font-family:'JetBrains Mono',monospace;font-size:0.58rem;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:5px;}}
-.callout{{background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:0.7rem 1rem;margin-top:0.4rem;font-size:0.82rem;line-height:1.7;color:var(--muted);}}
+/* ── Header ── */
+.bip-header{{
+  display:flex;align-items:center;gap:14px;
+  padding-bottom:1.5rem;margin-bottom:2rem;
+  border-bottom:1px solid var(--border);
+}}
+.bip-header h1{{
+  font-size:1.55rem!important;font-weight:700!important;
+  color:var(--text)!important;margin:0!important;letter-spacing:-0.5px;
+}}
+.bip-header .sub{{
+  font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:3px;
+  text-transform:uppercase;color:var(--muted);
+  background:var(--light);border:1px solid var(--border);
+  padding:4px 12px;border-radius:20px;
+}}
+/* ── Section labels ── */
+.section-label{{
+  font-family:'DM Mono',monospace;font-size:0.57rem;letter-spacing:3px;
+  text-transform:uppercase;color:var(--muted);margin:1.5rem 0 0.75rem;
+}}
+/* ── Patient card ── */
+.patient-card{{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:16px;padding:1.5rem 2rem;margin-bottom:1.75rem;
+  display:grid;grid-template-columns:repeat(4,1fr);gap:1.5rem;
+  box-shadow:0 2px 16px rgba(0,0,0,0.04);
+}}
+.patient-card .field label{{
+  font-family:'DM Mono',monospace;font-size:0.55rem;letter-spacing:2.5px;
+  text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px;
+}}
+.patient-card .field value{{font-size:1.05rem;font-weight:600;color:var(--text);}}
+/* ── Summary cards ── */
+.summary-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;}}
+.summary-card{{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:16px;padding:1.25rem 1.25rem;text-align:center;
+  transition:transform 0.15s,box-shadow 0.15s;
+  box-shadow:0 2px 8px rgba(0,0,0,0.03);
+}}
+.summary-card:hover{{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.08);}}
+.summary-card .num{{font-size:2.4rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px;}}
+.summary-card .lbl{{font-size:0.73rem;color:var(--muted);margin-top:6px;font-weight:400;}}
+/* ── Callout ── */
+.callout{{
+  background:var(--light);border:1px solid var(--border);
+  border-left:3px solid var(--accent);border-radius:0 12px 12px 0;
+  padding:0.85rem 1.2rem;margin-top:0.5rem;font-size:0.82rem;line-height:1.75;color:var(--muted);
+}}
 .callout b{{color:var(--text);}}
-.callout-title{{font-family:'JetBrains Mono',monospace;font-size:0.55rem;letter-spacing:2px;text-transform:uppercase;color:var(--accent);margin-bottom:4px;}}
+.callout-title{{
+  font-family:'DM Mono',monospace;font-size:0.55rem;letter-spacing:2px;
+  text-transform:uppercase;color:var(--accent);margin-bottom:5px;
+}}
+/* ── Range legend ── */
 .range-legend{{display:inline-flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--muted);margin-bottom:0.4rem;}}
 .dot{{width:9px;height:9px;border-radius:50%;display:inline-block;}}
-.stButton>button{{background:transparent!important;border:1px solid var(--accent)!important;color:var(--accent)!important;font-family:'JetBrains Mono',monospace!important;font-size:0.7rem!important;letter-spacing:1.5px!important;text-transform:uppercase!important;border-radius:5px!important;padding:0.4rem 1rem!important;transition:all 0.15s ease!important;}}
-.stButton>button:hover{{background:var(--accent)!important;color:#000!important;}}
-.stTabs [data-baseweb="tab-list"]{{border-bottom:1px solid var(--border)!important;gap:0;background:transparent!important;}}
-.stTabs [data-baseweb="tab"]{{background:transparent!important;border-radius:0!important;color:var(--muted)!important;font-family:'JetBrains Mono',monospace!important;font-size:0.68rem!important;letter-spacing:1.5px!important;text-transform:uppercase!important;padding:0.6rem 1.4rem!important;border-bottom:2px solid transparent!important;transition:color 0.15s!important;}}
-.stTabs [aria-selected="true"]{{color:var(--accent)!important;border-bottom:2px solid var(--accent)!important;}}
+/* ── Buttons ── */
+.stButton>button{{
+  background:var(--text)!important;border:none!important;color:#fff!important;
+  font-family:'DM Sans',sans-serif!important;font-size:0.82rem!important;
+  font-weight:500!important;border-radius:10px!important;
+  padding:0.45rem 1.2rem!important;transition:all 0.15s ease!important;
+  box-shadow:0 2px 8px rgba(26,26,46,0.15)!important;
+}}
+.stButton>button:hover{{
+  background:var(--accent)!important;color:#fff!important;
+  box-shadow:0 4px 16px rgba(78,205,196,0.35)!important;transform:translateY(-1px)!important;
+}}
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"]{{
+  border-bottom:1px solid var(--border)!important;gap:0;background:transparent!important;
+}}
+.stTabs [data-baseweb="tab"]{{
+  background:transparent!important;border-radius:0!important;color:var(--muted)!important;
+  font-family:'DM Sans',sans-serif!important;font-size:0.82rem!important;
+  font-weight:500!important;padding:0.75rem 1.6rem!important;
+  border-bottom:2px solid transparent!important;transition:color 0.15s!important;
+}}
+.stTabs [aria-selected="true"]{{color:var(--text)!important;border-bottom:2px solid var(--text)!important;}}
 .stTabs [data-baseweb="tab"]:hover{{color:var(--text)!important;}}
-.stFileUploader>div{{background:var(--surface)!important;border:1px dashed rgba(34,211,200,0.3)!important;border-radius:6px!important;}}
+/* ── File uploader ── */
+.stFileUploader>div{{
+  background:var(--surface)!important;border:2px dashed var(--border)!important;
+  border-radius:16px!important;
+}}
 .stFileUploader>div:hover{{border-color:var(--accent)!important;}}
-.stDataFrame{{border:1px solid var(--border)!important;border-radius:6px;}}
-.stSelectbox>div>div,.stTextInput>div>div>input,.stNumberInput>div>div>input{{background:var(--surface)!important;border:1px solid var(--border)!important;color:var(--text)!important;border-radius:5px!important;}}
-.stSelectbox>div>div:focus-within,.stTextInput>div>div:focus-within,.stNumberInput>div>div:focus-within{{border-color:var(--accent)!important;box-shadow:0 0 0 2px rgba(34,211,200,0.15)!important;}}
-.streamlit-expanderHeader{{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:6px!important;font-size:0.85rem!important;}}
-.stDownloadButton>button{{background:transparent!important;border:1px solid var(--border)!important;color:var(--muted)!important;font-family:'JetBrains Mono',monospace!important;font-size:0.66rem!important;border-radius:5px!important;}}
+/* ── Data frame ── */
+.stDataFrame{{border:1px solid var(--border)!important;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.03)!important;}}
+/* ── Inputs ── */
+.stSelectbox>div>div,.stTextInput>div>div>input,.stNumberInput>div>div>input{{
+  background:var(--surface)!important;border:1px solid var(--border)!important;
+  color:var(--text)!important;border-radius:10px!important;
+}}
+.stSelectbox>div>div:focus-within,.stTextInput>div>div:focus-within,.stNumberInput>div>div:focus-within{{
+  border-color:var(--accent)!important;box-shadow:0 0 0 3px rgba(78,205,196,0.12)!important;
+}}
+/* ── Expander ── */
+.streamlit-expanderHeader{{
+  background:var(--surface)!important;border:1px solid var(--border)!important;
+  border-radius:12px!important;font-size:0.85rem!important;
+  box-shadow:0 1px 4px rgba(0,0,0,0.03)!important;
+}}
+/* ── Download button ── */
+.stDownloadButton>button{{
+  background:transparent!important;border:1px solid var(--border)!important;
+  color:var(--muted)!important;font-family:'DM Mono',monospace!important;
+  font-size:0.66rem!important;border-radius:8px!important;
+  box-shadow:none!important;
+}}
 .stDownloadButton>button:hover{{border-color:var(--muted)!important;color:var(--text)!important;}}
-.stProgress>div>div>div>div{{background:var(--accent)!important;}}
-.stPlotlyChart{{border:1px solid var(--border);border-radius:6px;overflow:hidden;}}
-/* Alert boxes */
-div[data-testid="stAlert"]{{border-radius:6px!important;}}
-div[data-testid="stNotification"]{{border-radius:6px!important;}}
-[data-testid="stAlert"][data-baseweb="notification"]{{background:var(--surface2)!important;}}
-/* Spinner */
+/* ── Progress ── */
+.stProgress>div>div>div>div{{background:var(--accent)!important;border-radius:4px!important;}}
+/* ── Plotly charts ── */
+.stPlotlyChart{{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.04)!important;}}
+/* ── Alerts ── */
+div[data-testid="stAlert"]{{border-radius:12px!important;}}
 div[data-testid="stSpinner"]>div{{border-top-color:var(--accent)!important;}}
-/* Caption text */
 .stCaptionContainer p{{color:var(--muted)!important;font-size:0.78rem!important;}}
-/* Multiselect */
-div[data-baseweb="tag"]{{background:rgba(34,211,200,0.12)!important;border:1px solid rgba(34,211,200,0.25)!important;}}
+/* ── Multiselect tags ── */
+div[data-baseweb="tag"]{{
+  background:rgba(78,205,196,0.1)!important;border:1px solid rgba(78,205,196,0.25)!important;
+  border-radius:6px!important;
+}}
 div[data-baseweb="tag"] span{{color:var(--accent)!important;}}
-/* Help tooltip icon */
 [data-testid="stWidgetLabel"] svg{{fill:var(--muted)!important;}}
 #MainMenu,footer,.stDeployButton{{visibility:hidden;}}
+/* ── Biomarker pill slider (custom HTML component) ── */
+.pill-track{{
+  position:relative;height:32px;background:var(--light);
+  border:1.5px dashed var(--border);border-radius:20px;
+  margin:8px 0 4px;
+}}
+.pill-optimal{{
+  position:absolute;height:100%;background:rgba(78,205,196,0.15);
+  border:1.5px dashed {ACCENT};border-radius:20px;
+}}
+.pill-dot{{
+  position:absolute;top:50%;transform:translate(-50%,-50%);
+  width:22px;height:22px;border-radius:50%;border:2.5px solid var(--surface);
+  box-shadow:0 2px 8px rgba(0,0,0,0.15);z-index:2;
+}}
+.pill-label{{
+  position:absolute;top:-18px;transform:translateX(-50%);
+  font-size:0.72rem;font-weight:600;white-space:nowrap;
+}}
+.pill-sublabel{{
+  position:absolute;bottom:-18px;transform:translateX(-50%);
+  font-size:0.62rem;color:var(--muted);white-space:nowrap;
+}}
+/* ── Biomarker row card ── */
+.bm-row{{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:14px;padding:1.1rem 1.4rem;margin-bottom:0.75rem;
+  box-shadow:0 1px 6px rgba(0,0,0,0.03);
+}}
+.bm-row-name{{font-size:0.95rem;font-weight:600;color:var(--text);}}
+.bm-row-unit{{font-size:0.75rem;color:var(--muted);margin-top:1px;}}
+.bm-row-value{{font-size:1.5rem;font-weight:700;}}
+.bm-row-meta{{font-size:0.78rem;color:var(--muted);}}
+/* ── Sidebar nav ── */
+.nav-item{{
+  padding:0.5rem 0.75rem;border-radius:10px;margin-bottom:2px;
+  font-size:0.85rem;font-weight:500;cursor:pointer;
+  transition:background 0.15s;color:var(--muted);
+}}
+.nav-item:hover{{background:var(--light);color:var(--text);}}
+.nav-item.active{{background:var(--light);color:var(--text);font-weight:600;}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -226,20 +367,20 @@ def _status_sort(s: str) -> int:
 def _point_color(status: str) -> str:
     s = str(status)
     if "CRITICAL" in s: return CRIT
-    if "HIGH"     in s: return RED
-    if "LOW"      in s: return AMBER
-    return GREEN
+    if "HIGH"     in s: return ORANGE
+    if "LOW"      in s: return PURPLE
+    return ACCENT
 
 
 def status_pill(status: str) -> str:
     s = str(status)
     if "CRITICAL" in s:
-        return f'<span style="color:{CRIT};font-weight:700">{s}</span>'
+        return f'<span style="background:{CRIT}22;color:{CRIT};font-weight:600;padding:2px 8px;border-radius:20px;font-size:0.78rem">{s}</span>'
     if "HIGH" in s:
-        return f'<span style="color:{RED};font-weight:700">{s}</span>'
+        return f'<span style="background:{ORANGE}22;color:{ORANGE};font-weight:600;padding:2px 8px;border-radius:20px;font-size:0.78rem">{s}</span>'
     if "LOW" in s:
-        return f'<span style="color:{AMBER};font-weight:700">{s}</span>'
-    return f'<span style="color:{GREEN}">{s or "Normal"}</span>'
+        return f'<span style="background:{PURPLE}22;color:{PURPLE};font-weight:600;padding:2px 8px;border-radius:20px;font-size:0.78rem">{s}</span>'
+    return f'<span style="background:{ACCENT}22;color:{ACCENT};font-weight:600;padding:2px 8px;border-radius:20px;font-size:0.78rem">{s or "Normal"}</span>'
 
 
 # Temp file registry — cleaned up when the process exits
@@ -305,20 +446,20 @@ def render_summary_cards(snapshot: pd.DataFrame):
     normal   = total - abnormal
     oor      = abnormal - critical   # out-of-range but not critical
     pct_ok   = int(normal / total * 100) if total else 0
-    bar_col  = GREEN if pct_ok >= 80 else (AMBER if pct_ok >= 60 else RED)
+    bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
 
     st.markdown(f"""
     <div class="summary-grid">
       <div class="summary-card">
-        <div class="num" style="color:#fff">{total}</div>
-        <div class="lbl">Tests</div>
+        <div class="num" style="color:{TEXT}">{total}</div>
+        <div class="lbl">Total Tests</div>
       </div>
       <div class="summary-card">
-        <div class="num" style="color:{GREEN}">{normal}</div>
+        <div class="num" style="color:{ACCENT}">{normal}</div>
         <div class="lbl">Within Range</div>
       </div>
       <div class="summary-card">
-        <div class="num" style="color:{AMBER}">{oor}</div>
+        <div class="num" style="color:{ORANGE}">{oor}</div>
         <div class="lbl">Out of Range</div>
       </div>
       <div class="summary-card">
@@ -326,17 +467,14 @@ def render_summary_cards(snapshot: pd.DataFrame):
         <div class="lbl">Critical</div>
       </div>
     </div>
-    <div style="margin-bottom:1.25rem">
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:0.57rem;
-               letter-spacing:2px;text-transform:uppercase;color:{MUTED}">
-          Within-Range Score</span>
-        <span style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;
-               font-weight:600;color:{bar_col}">{pct_ok}%</span>
+    <div style="margin-bottom:1.5rem">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:0.78rem;color:{MUTED}">Within-Range Score</span>
+        <span style="font-size:0.82rem;font-weight:600;color:{bar_col}">{pct_ok}%</span>
       </div>
-      <div style="background:{BORDER};border-radius:4px;height:5px">
+      <div style="background:{BORDER};border-radius:8px;height:6px">
         <div style="width:{pct_ok}%;height:100%;background:{bar_col};
-               border-radius:4px;transition:width 0.4s"></div>
+               border-radius:8px;transition:width 0.6s ease"></div>
       </div>
     </div>""", unsafe_allow_html=True)
 
@@ -442,7 +580,208 @@ def render_trends_table(trends: pd.DataFrame):
 
 
 # ─────────────────────────────────────────────
-# RENDER: TREND CHARTS  (coloured reference zones)
+# RENDER: PILL SLIDER  (biomarker range visualizer)
+# ─────────────────────────────────────────────
+
+def render_pill_slider(value: float, n_min, n_max, o_min, o_max, unit: str, status: str) -> str:
+    """Generate an HTML pill-track slider like the reference design."""
+    # Determine display range
+    ref_lo = o_min if o_min is not None else n_min
+    ref_hi = o_max if o_max is not None else n_max
+    optimal = (o_min + o_max) / 2 if (o_min is not None and o_max is not None) else None
+
+    if ref_lo is None and ref_hi is None:
+        return ""
+
+    # Build range for track
+    all_vals = [v for v in [value, ref_lo, ref_hi, n_min, n_max] if v is not None]
+    if not all_vals:
+        return ""
+    span_lo = min(all_vals) * 0.7
+    span_hi = max(all_vals) * 1.35
+    if span_lo == span_hi:
+        span_lo -= 1; span_hi += 1
+    span = span_hi - span_lo
+
+    def pct(v):
+        return max(2, min(96, (v - span_lo) / span * 100))
+
+    # Value dot color
+    s = str(status)
+    if   "CRITICAL" in s: dot_color = CRIT
+    elif "HIGH"     in s: dot_color = ORANGE
+    elif "LOW"      in s: dot_color = PURPLE
+    else:                  dot_color = BLUE
+
+    val_pct = pct(value)
+
+    # Optimal zone (dashed teal strip inside track)
+    opt_html = ""
+    if ref_lo is not None and ref_hi is not None:
+        opt_l = pct(ref_lo)
+        opt_r = pct(ref_hi)
+        opt_html = (
+            f'<div style="position:absolute;left:{opt_l}%;width:{opt_r - opt_l}%;'
+            f'height:100%;background:rgba(78,205,196,0.12);'
+            f'border:1.5px dashed {ACCENT};border-radius:20px;"></div>'
+        )
+
+    # Optimal label below track
+    opt_label_html = ""
+    if optimal is not None:
+        opt_pct = pct(optimal)
+        opt_label_html = (
+            f'<div style="position:absolute;bottom:-16px;left:{opt_pct}%;'
+            f'transform:translateX(-50%);font-size:0.62rem;color:{ACCENT};white-space:nowrap">'
+            f'{optimal:.3g}</div>'
+        )
+
+    # Previous value dot (grey) — we can't easily pass prev here so skip for now
+    val_label = f"{value:.4g}"
+    unit_str = f" {unit}" if unit else ""
+
+    html = f"""
+    <div style="position:relative;margin-top:24px;margin-bottom:20px;padding:0 4px">
+      <div style="position:relative;height:28px;background:{LIGHT};
+                  border:1.5px dashed {BORDER};border-radius:20px;overflow:visible">
+        {opt_html}
+        <!-- Value dot -->
+        <div style="position:absolute;top:50%;left:{val_pct}%;
+                    transform:translate(-50%,-50%);
+                    width:22px;height:22px;border-radius:50%;
+                    background:{dot_color};border:3px solid {SURFACE};
+                    box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:3"></div>
+        <!-- Value label above -->
+        <div style="position:absolute;top:-20px;left:{val_pct}%;
+                    transform:translateX(-50%);font-size:0.72rem;
+                    font-weight:600;color:{dot_color};white-space:nowrap">{val_label}</div>
+        {opt_label_html}
+      </div>
+    </div>"""
+    return html
+
+
+# ─────────────────────────────────────────────
+# RENDER: BIOMARKER DETAIL CARDS
+# (like Image 2 & 7 — pill slider per biomarker)
+# ─────────────────────────────────────────────
+
+def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None):
+    """Render individual biomarker cards with pill sliders — sorted by status severity."""
+    df = snapshot.copy()
+    df["_ord"] = df["status"].apply(_status_sort)
+    df = df.sort_values(["_ord", "test_name"]).drop(columns=["_ord"])
+    df["unit"] = df["unit"].apply(clean_unit)
+
+    # Get previous values if history provided
+    prev_values = {}
+    if history is not None and not history.empty:
+        sorted_hist = history.sort_values("report_date")
+        dates = sorted_hist["report_date"].dt.strftime("%Y-%m-%d").unique()
+        if len(dates) >= 2:
+            prev_date = dates[-2]
+            prev_df = sorted_hist[sorted_hist["report_date"].dt.strftime("%Y-%m-%d") == prev_date]
+            for _, r in prev_df.iterrows():
+                prev_values[r["test_name"]] = r["value"]
+
+    def fmt(v):
+        try: return f"{float(v):.4g}"
+        except: return str(v)
+
+    for _, row in df.iterrows():
+        test   = row["test_name"]
+        val    = row["value"]
+        unit   = row["unit"]
+        status = str(row.get("status", ""))
+        bm     = bm_lookup(test)
+
+        n_min = bm.get("normal_min")
+        n_max = bm.get("normal_max")
+        o_min = bm.get("optimal_min")
+        o_max = bm.get("optimal_max")
+
+        # Status color
+        s = status
+        if   "CRITICAL" in s: val_color, bg_accent = CRIT,   f"rgba({int(CRIT[1:3],16)},{int(CRIT[3:5],16)},{int(CRIT[5:7],16)},0.07)"
+        elif "HIGH"     in s: val_color, bg_accent = ORANGE, f"rgba(249,123,90,0.06)"
+        elif "LOW"      in s: val_color, bg_accent = PURPLE, f"rgba(192,132,252,0.06)"
+        else:                  val_color, bg_accent = BLUE,   f"rgba(116,185,232,0.06)"
+
+        # Pill slider HTML
+        try:
+            fval = float(val)
+            pill_html = render_pill_slider(fval, n_min, n_max, o_min, o_max, unit, status)
+        except (ValueError, TypeError):
+            pill_html = ""
+
+        # Range string
+        ref_lo = o_min if o_min is not None else n_min
+        ref_hi = o_max if o_max is not None else n_max
+        if ref_lo is not None and ref_hi is not None:
+            range_str = f"({ref_lo:.4g} – {ref_hi:.4g})"
+        elif ref_hi is not None:
+            range_str = f"(< {ref_hi:.4g})"
+        elif ref_lo is not None:
+            range_str = f"(> {ref_lo:.4g})"
+        else:
+            range_str = "—"
+
+        # Optimal
+        if o_min is not None and o_max is not None:
+            opt_val = (o_min + o_max) / 2
+            try:
+                fval = float(val)
+                diff = fval - opt_val
+                to_opt = f"{'+' if diff > 0 else ''}{diff:.3g}"
+                opt_str = f"Optimal: {opt_val:.4g}"
+            except: to_opt = "—"; opt_str = ""
+        else:
+            to_opt = "—"; opt_str = ""
+
+        # Previous value
+        prev = prev_values.get(test)
+        prev_str = f"{prev:.4g}" if prev is not None else "—"
+
+        # Left border color based on status
+        left_border = val_color
+
+        st.markdown(f"""
+        <div class="bm-row" style="border-left:3px solid {left_border};background:linear-gradient(135deg,{bg_accent} 0%,{SURFACE} 60%)">
+          <div style="display:grid;grid-template-columns:200px 1fr 120px 120px 120px;gap:1rem;align-items:start">
+            <div>
+              <div class="bm-row-name">⊕ {test}</div>
+              <div class="bm-row-unit">{unit}</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:0.5rem">
+              <div>
+                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">Current Value</div>
+                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px">
+                  <span style="font-size:1.35rem;font-weight:700;color:{val_color}">{fmt(val)}</span>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">Normal Range</div>
+                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px;font-size:0.88rem;font-weight:500;color:{TEXT}">{range_str}</div>
+              </div>
+              <div>
+                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">To Optimal</div>
+                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px">
+                  <div style="font-size:0.88rem;font-weight:600;color:{TEXT}">{to_opt}</div>
+                  <div style="font-size:0.72rem;color:{MUTED}">{opt_str}</div>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:0.68rem;color:{MUTED};margin-bottom:2px">Previous Value</div>
+                <div style="border-bottom:1px solid {BORDER};padding-bottom:8px;font-size:0.88rem;color:{MUTED}">{prev_str}</div>
+              </div>
+            </div>
+          </div>
+          {pill_html}
+        </div>""", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+# RENDER: TREND CHARTS  (new InoAge-style design)
 # ─────────────────────────────────────────────
 
 def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix: str = ""):
@@ -476,93 +815,132 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
         desc   = bm.get("short_description")
         interp = bm.get("interpretation_summary")
 
-        # Prefer optimal range for green band; fall back to normal
         lo = o_min if o_min is not None else n_min
         hi = o_max if o_max is not None else n_max
 
-        # Y-axis range with padding
         y_vals = ts["value"].dropna()
         if y_vals.empty:
             continue
         candidates = list(y_vals) + [v for v in [lo, hi, n_min, n_max] if v is not None]
-        axis_lo = min(candidates) * 0.85
-        axis_hi = max(candidates) * 1.20
+        axis_lo = min(candidates) * 0.82
+        axis_hi = max(candidates) * 1.22
 
         point_colors = [_point_color(s) for s in ts["status"]]
         unit_label   = f" {unit}" if unit else ""
 
         fig = go.Figure()
 
-        # ── Reference zone bands ────────────────────────────────────────
+        # ── Optimal zone (soft teal band) ──────────────────────────────
         if lo is not None and hi is not None:
-            # Red above upper limit
-            fig.add_hrect(y0=hi, y1=axis_hi, fillcolor=RED_Z,   line_width=0, layer="below")
-            # Amber below lower limit
-            fig.add_hrect(y0=axis_lo, y1=lo, fillcolor=AMBER_Z, line_width=0, layer="below")
-            # Green = normal band
-            fig.add_hrect(y0=lo, y1=hi,      fillcolor=GREEN_Z, line_width=0, layer="below")
-            # Dashed boundary lines
-            fig.add_hline(y=hi, line=dict(color=RED,   width=1, dash="dot"), layer="below")
-            fig.add_hline(y=lo, line=dict(color=AMBER, width=1, dash="dot"), layer="below")
+            fig.add_hrect(y0=lo, y1=hi,
+                          fillcolor="rgba(78,205,196,0.06)",
+                          line=dict(color=ACCENT, width=1, dash="dot"),
+                          layer="below")
+            # Red above
+            fig.add_hrect(y0=hi, y1=axis_hi,
+                          fillcolor="rgba(249,123,90,0.05)",
+                          line_width=0, layer="below")
+            # Purple below
+            fig.add_hrect(y0=axis_lo, y1=lo,
+                          fillcolor="rgba(192,132,252,0.05)",
+                          line_width=0, layer="below")
         elif hi is not None:
-            fig.add_hrect(y0=hi,     y1=axis_hi, fillcolor=RED_Z,   line_width=0, layer="below")
-            fig.add_hrect(y0=axis_lo, y1=hi,     fillcolor=GREEN_Z, line_width=0, layer="below")
-            fig.add_hline(y=hi, line=dict(color=RED, width=1, dash="dot"), layer="below")
+            fig.add_hrect(y0=hi, y1=axis_hi, fillcolor="rgba(249,123,90,0.05)", line_width=0, layer="below")
+            fig.add_hrect(y0=axis_lo, y1=hi, fillcolor="rgba(78,205,196,0.06)", line_width=0, layer="below")
+            fig.add_hline(y=hi, line=dict(color=ACCENT, width=1, dash="dot"), layer="below")
         elif lo is not None:
-            fig.add_hrect(y0=axis_lo, y1=lo, fillcolor=AMBER_Z, line_width=0, layer="below")
-            fig.add_hrect(y0=lo, y1=axis_hi,  fillcolor=GREEN_Z, line_width=0, layer="below")
-            fig.add_hline(y=lo, line=dict(color=AMBER, width=1, dash="dot"), layer="below")
+            fig.add_hrect(y0=axis_lo, y1=lo, fillcolor="rgba(192,132,252,0.05)", line_width=0, layer="below")
+            fig.add_hrect(y0=lo, y1=axis_hi, fillcolor="rgba(78,205,196,0.06)", line_width=0, layer="below")
+            fig.add_hline(y=lo, line=dict(color=ACCENT, width=1, dash="dot"), layer="below")
 
-        # ── Data trace ──────────────────────────────────────────────────
+        # ── Gradient line connecting points ─────────────────────────────
+        # Draw colored line segments between consecutive points
+        for i in range(len(ts) - 1):
+            seg_color = point_colors[i]
+            fig.add_trace(go.Scatter(
+                x=[ts["report_date"].iloc[i], ts["report_date"].iloc[i+1]],
+                y=[ts["value"].iloc[i], ts["value"].iloc[i+1]],
+                mode="lines",
+                line=dict(color=seg_color, width=2.5, shape="spline"),
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+        # ── Data points (hollow circles with colored fill like reference) ──
         fig.add_trace(go.Scatter(
             x=ts["report_date"],
             y=ts["value"],
-            mode="lines+markers+text",
-            line=dict(color=ACCENT, width=2.5),
-            marker=dict(color=point_colors, size=11, line=dict(color=BG, width=2)),
+            mode="markers+text",
+            marker=dict(
+                color=point_colors,
+                size=14,
+                line=dict(color=SURFACE, width=3),
+                symbol="circle",
+            ),
             text=[f"{v:.4g}" for v in ts["value"]],
             textposition="top center",
-            textfont=dict(color=TEXT, size=11, family="JetBrains Mono"),
-            hovertemplate=f"%{{x|%d %b %Y}}<br><b>%{{y:.4g}}</b>{unit_label}<extra></extra>",
+            textfont=dict(color=TEXT, size=11, family="DM Sans"),
+            hovertemplate=f"%{{x|%b %Y}}<br><b>%{{y:.4g}}</b>{unit_label}<extra></extra>",
             name=test,
         ))
 
-        # ── Annotation: normal range ─────────────────────────────────────
+        # ── Annotation labels at x-axis (like reference: "Mar 2023\n64/100") ──
+        # Date labels colored by status — added via x-axis ticktext workaround
+
         lo_s = f"{lo:.4g}" if lo is not None else "—"
         hi_s = f"{hi:.4g}" if hi is not None else "—"
-        ann_text = (f"Normal: {lo_s} – {hi_s}{unit_label}"
+        ann_text = (f"Target range: {lo_s} – {hi_s}{unit_label}"
                     if (lo is not None or hi is not None) else "")
+
+        # Optimal zone label at right
+        annotations = []
+        if hi is not None:
+            annotations.append(dict(
+                xref="paper", yref="y", x=1.01, y=hi,
+                text="Optimal", showarrow=False,
+                font=dict(color=ACCENT, size=10, family="DM Sans"),
+                xanchor="left",
+            ))
 
         title_text = f"<b>{test}</b>"
         if unit:
             title_text += f"  <span style='font-size:11px;color:{MUTED}'>({unit})</span>"
 
+        # Legend dots (Outside Target / Balanced / Optimized)
         fig.update_layout(
-            title=dict(text=title_text, font=dict(color=TEXT, size=15, family="Inter"), x=0),
+            title=dict(text=title_text, font=dict(color=TEXT, size=15, family="DM Sans"), x=0),
             paper_bgcolor=SURFACE,
-            plot_bgcolor=BG,
-            font=dict(color=MUTED, family="Inter"),
-            xaxis=dict(showgrid=True, gridcolor=BORDER, tickformat="%b %Y",
-                       tickfont=dict(color=MUTED, size=11), zeroline=False, showline=False),
-            yaxis=dict(showgrid=True, gridcolor=BORDER,
-                       tickfont=dict(color=MUTED, size=11), zeroline=False, showline=False,
-                       title=dict(text=unit, font=dict(color=MUTED, size=11)),
-                       range=[axis_lo, axis_hi]),
-            margin=dict(l=50, r=20, t=55, b=40),
+            plot_bgcolor=SURFACE,
+            font=dict(color=MUTED, family="DM Sans"),
+            xaxis=dict(
+                showgrid=True, gridcolor=BORDER, gridwidth=1,
+                tickformat="%b %Y",
+                tickfont=dict(color=MUTED, size=11, family="DM Sans"),
+                zeroline=False, showline=False,
+            ),
+            yaxis=dict(
+                showgrid=True, gridcolor=BORDER, gridwidth=1,
+                tickfont=dict(color=MUTED, size=11, family="DM Sans"),
+                zeroline=False, showline=False,
+                title=dict(text=unit, font=dict(color=MUTED, size=11)),
+                range=[axis_lo, axis_hi],
+            ),
+            margin=dict(l=50, r=80, t=55, b=50),
             height=320, showlegend=False, hovermode="x unified",
-            hoverlabel=dict(bgcolor=SURFACE2, bordercolor=BORDER,
-                            font=dict(color=TEXT, family="Inter")),
+            hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER,
+                            font=dict(color=TEXT, family="DM Sans")),
+            annotations=annotations,
         )
 
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-        # Zone legend — shown below chart so the user reads it after seeing the chart
+        # Zone legend
         if lo is not None or hi is not None:
             st.markdown(f"""
             <div class="range-legend" style="margin-top:0.25rem;margin-bottom:0.5rem">
-              <span class="dot" style="background:{GREEN}"></span>Normal range
-              <span class="dot" style="background:{RED};margin-left:12px"></span>High zone
-              <span class="dot" style="background:{AMBER};margin-left:12px"></span>Low zone
+              <span class="dot" style="background:{ACCENT}"></span>Optimal range
+              <span class="dot" style="background:{ORANGE};margin-left:12px"></span>High
+              <span class="dot" style="background:{PURPLE};margin-left:12px"></span>Low
               &nbsp;·&nbsp; <span style="font-size:0.68rem">{ann_text}</span>
             </div>""", unsafe_allow_html=True)
 
@@ -578,6 +956,113 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
             st.markdown(html, unsafe_allow_html=True)
 
         st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+# RENDER: DUMBBELL CHANGE CHART
+# (like Image 3 — shows previous → current change)
+# ─────────────────────────────────────────────
+
+def render_change_chart(trends: pd.DataFrame, key_prefix: str = ""):
+    """Horizontal dumbbell plot: grey previous dot → colored current dot."""
+    df = trends.dropna(subset=["first_value", "latest_value"]).copy()
+    if df.empty:
+        return
+
+    # Only tests with 2+ readings
+    df = df[df["n_reports"] >= 2].copy()
+    if df.empty:
+        return
+
+    # Determine color per test based on latest status
+    def row_color(r):
+        s = str(r["latest_status"])
+        pct = float(r["change_%"]) if pd.notna(r.get("change_%")) else 0
+        if "CRITICAL" in s: return CRIT
+        if "HIGH" in s:
+            return ORANGE if pct > 0 else ACCENT  # worsening HIGH = orange, improving = teal
+        if "LOW" in s:
+            return PURPLE if pct < 0 else ACCENT
+        return ACCENT
+
+    df["_color"] = df.apply(row_color, axis=1)
+    df["_pct"]   = df["change_%"].apply(lambda x: float(x) if pd.notna(x) else 0)
+
+    # Sort by absolute change descending
+    df = df.sort_values("_pct", key=abs, ascending=False).head(20)
+
+    fig = go.Figure()
+
+    y_labels = df["test_name"].tolist()
+
+    # Draw connecting lines
+    for i, (_, r) in enumerate(df.iterrows()):
+        fv = float(r["first_value"])
+        lv = float(r["latest_value"])
+        fig.add_trace(go.Scatter(
+            x=[fv, lv], y=[r["test_name"], r["test_name"]],
+            mode="lines",
+            line=dict(color=BORDER, width=2),
+            showlegend=False, hoverinfo="skip",
+        ))
+
+    # Previous dots (grey hollow)
+    fig.add_trace(go.Scatter(
+        x=df["first_value"].astype(float),
+        y=df["test_name"],
+        mode="markers",
+        marker=dict(color=SURFACE, size=12, line=dict(color=MUTED, width=2.5)),
+        name="Previous",
+        hovertemplate="Previous: <b>%{x:.4g}</b><extra></extra>",
+    ))
+
+    # Current dots (colored)
+    fig.add_trace(go.Scatter(
+        x=df["latest_value"].astype(float),
+        y=df["test_name"],
+        mode="markers",
+        marker=dict(color=df["_color"].tolist(), size=14,
+                    line=dict(color=SURFACE, width=2.5)),
+        name="Current",
+        hovertemplate="Current: <b>%{x:.4g}</b><extra></extra>",
+    ))
+
+    # Change labels
+    for _, r in df.iterrows():
+        pct = r["_pct"]
+        lv  = float(r["latest_value"])
+        arrow = "→"
+        label = f"{arrow}{abs(pct):.1f}"
+        lbl_color = r["_color"]
+        fig.add_annotation(
+            x=lv, y=r["test_name"],
+            text=f'<span style="color:{lbl_color}">+{label}</span>' if pct > 0 else f'<span style="color:{lbl_color}">{label}</span>',
+            showarrow=False, xanchor="left", xshift=18,
+            font=dict(size=10, color=lbl_color, family="DM Mono"),
+        )
+
+    n_tests = len(df)
+    chart_h = max(300, n_tests * 40 + 80)
+
+    fig.update_layout(
+        paper_bgcolor=SURFACE, plot_bgcolor=SURFACE,
+        font=dict(color=MUTED, family="DM Sans"),
+        xaxis=dict(showgrid=True, gridcolor=BORDER, zeroline=True,
+                   zerolinecolor=BORDER, zerolinewidth=1,
+                   tickfont=dict(color=MUTED, size=11)),
+        yaxis=dict(showgrid=False, tickfont=dict(color=TEXT, size=11, family="DM Sans"),
+                   categoryorder="array", categoryarray=y_labels[::-1]),
+        margin=dict(l=180, r=80, t=30, b=40),
+        height=chart_h, hovermode="y",
+        showlegend=True,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+            font=dict(color=MUTED, size=11),
+        ),
+        hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(color=TEXT, family="DM Sans")),
+    )
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 # ─────────────────────────────────────────────
@@ -618,10 +1103,27 @@ def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefi
                     unsafe_allow_html=True,
                 )
 
-    st.markdown('<div class="section-label">Trend Summary</div>', unsafe_allow_html=True)
+    # ── Biomarker Change Dumbbell Chart ────────────────────────────────
+    st.markdown(f"""
+    <div style="margin-top:1.5rem;margin-bottom:0.25rem">
+      <div style="font-size:1.1rem;font-weight:700;color:{TEXT}">Biomarker Change</div>
+      <div style="font-size:0.82rem;color:{MUTED};margin-top:2px">
+        How each biomarker has changed since your previous report.
+        Current values are shown in color, previous in grey.
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    trends_with_2 = trends[trends["n_reports"] >= 2]
+    if not trends_with_2.empty:
+        render_change_chart(trends_with_2, key_prefix=key_prefix)
+    else:
+        st.info("Need at least 2 readings per biomarker to show changes.")
+
+    st.markdown('<div class="section-label" style="margin-top:1.75rem">Trend Summary Table</div>',
+                unsafe_allow_html=True)
     render_trends_table(trends)
 
-    st.markdown('<div class="section-label" style="margin-top:1.75rem">Charts</div>',
+    st.markdown('<div class="section-label" style="margin-top:1.75rem">Time Series Charts</div>',
                 unsafe_allow_html=True)
     render_trend_charts(history, trends, key_prefix=key_prefix)
 
@@ -671,18 +1173,19 @@ with st.sidebar:
     for p in list_patients():
         icon = "♂" if str(p.get("gender", "")).upper() == "M" else "♀"
         st.markdown(
-            f'<div style="font-size:0.78rem;color:{TEXT};margin-bottom:5px;line-height:1.4">'
+            f'<div style="font-size:0.82rem;color:{TEXT};margin-bottom:6px;line-height:1.4;'
+            f'padding:6px 8px;border-radius:8px;background:{LIGHT}">'
             f'{icon} <strong>{p["patient_name"]}</strong>'
-            f'<span style="color:{MUTED};margin-left:8px;font-size:0.7rem">'
+            f'<span style="color:{MUTED};margin-left:8px;font-size:0.72rem">'
             f'{p["n_reports"]} report(s)</span></div>',
             unsafe_allow_html=True,
         )
 
     if llm_enabled:
         st.markdown(f"""
-        <div style="margin-top:1.5rem;padding:8px 10px;background:{SURFACE2};
+        <div style="margin-top:1.5rem;padding:10px 12px;background:{LIGHT};
              border:1px solid {BORDER};border-left:3px solid {ACCENT};
-             border-radius:4px;font-size:0.72rem;color:{MUTED}">
+             border-radius:10px;font-size:0.72rem;color:{MUTED}">
           🤖 Claude verification active
         </div>""", unsafe_allow_html=True)
 
@@ -831,7 +1334,17 @@ if page == "Upload Reports":
                 with tab1:
                     snapshot = get_snapshot(history)
                     render_summary_cards(snapshot)
-                    render_results_table(snapshot)
+                    view_mode_ul = st.radio(
+                        "View as",
+                        ["Biomarker Cards", "Table"],
+                        horizontal=True,
+                        key=f"ul_view_{pid}",
+                        label_visibility="collapsed",
+                    )
+                    if view_mode_ul == "Biomarker Cards":
+                        render_biomarker_cards(snapshot, history=history)
+                    else:
+                        render_results_table(snapshot)
                     st.download_button(
                         "↓ Export CSV",
                         data=snapshot.to_csv(index=False).encode("utf-8"),
@@ -960,7 +1473,20 @@ elif page == "Patient Profiles":
             with tab1:
                 snapshot = get_snapshot(history)
                 render_summary_cards(snapshot)
-                render_results_table(snapshot)
+
+                # Toggle: cards vs table
+                view_mode = st.radio(
+                    "View as",
+                    ["Biomarker Cards", "Table"],
+                    horizontal=True,
+                    key=f"view_mode_{selected_pid}",
+                    label_visibility="collapsed",
+                )
+                if view_mode == "Biomarker Cards":
+                    render_biomarker_cards(snapshot, history=history)
+                else:
+                    render_results_table(snapshot)
+
                 st.download_button(
                     "↓ Export Latest CSV",
                     data=snapshot.to_csv(index=False).encode("utf-8"),
@@ -1061,12 +1587,12 @@ elif page == "LLM Review":
 
     st.markdown(f"""
     <div style="display:flex;gap:1.25rem;flex-wrap:wrap;margin:0.75rem 0 1.25rem;
-         padding:0.6rem 1rem;background:{SURFACE};border:1px solid {BORDER};border-radius:6px;
+         padding:0.75rem 1.25rem;background:{SURFACE};border:1px solid {BORDER};border-radius:12px;
          font-size:0.75rem;color:{MUTED}">
       <span>🆕 <b style="color:{TEXT}">MISSED</b> — in PDF but skipped by regex</span>
       <span>⚠️ <b style="color:{TEXT}">CORRECTED</b> — value/unit differs</span>
       <span>🔴 <b style="color:{CRIT}">CRITICAL</b> — danger zone</span>
-      <span>📊 <b style="color:{RED}">HIGH</b> / <b style="color:{AMBER}">LOW</b> — out of range</span>
+      <span>📊 <b style="color:{ORANGE}">HIGH</b> / <b style="color:{PURPLE}">LOW</b> — out of range</span>
       <span>📋 <b style="color:{TEXT}">METADATA</b> — date/name/unit issue</span>
       <span>❓ <b style="color:{TEXT}">LOW CONFIDENCE</b> — Claude unsure</span>
     </div>""", unsafe_allow_html=True)
@@ -1177,8 +1703,8 @@ elif page == "LLM Review":
                         rflag_color = TEXT
                         if   rflag == "CRITICAL_HIGH": rflag_html, rflag_color = "🔴 CRITICAL HIGH", CRIT
                         elif rflag == "CRITICAL_LOW":  rflag_html, rflag_color = "🔴 CRITICAL LOW",  CRIT
-                        elif rflag == "HIGH":           rflag_html, rflag_color = "📊 HIGH",           RED
-                        elif rflag == "LOW":            rflag_html, rflag_color = "📊 LOW",            AMBER
+                        elif rflag == "HIGH":           rflag_html, rflag_color = "📊 HIGH",           ORANGE
+                        elif rflag == "LOW":            rflag_html, rflag_color = "📊 LOW",            PURPLE
 
                         ci, ca, cr = st.columns([5, 1, 1])
                         with ci:
@@ -1279,13 +1805,11 @@ elif page == "About":
       </p>
       <div class="section-label" style="margin-top:2rem">Chart colour guide</div>
       <p style="color:{MUTED};line-height:1.85;font-size:0.85rem">
-        <span style="color:{GREEN}">■</span> Green band — normal reference range<br>
-        <span style="color:{RED}">■</span> Red zone — above upper limit (HIGH)<br>
-        <span style="color:{AMBER}">■</span> Amber zone — below lower limit (LOW)<br>
-        <span style="color:{ACCENT}">●</span> Teal dot — value within normal range<br>
-        <span style="color:{RED}">●</span> Red dot — HIGH value<br>
-        <span style="color:{AMBER}">●</span> Amber dot — LOW value<br>
-        <span style="color:{CRIT}">●</span> Bright-red dot — CRITICAL value
+        <span style="color:{ACCENT}">■</span> Teal (Optimized) — value within optimal range<br>
+        <span style="color:{BLUE}">■</span> Blue (Balanced) — within normal range<br>
+        <span style="color:{PURPLE}">■</span> Lavender (Moderate/Low) — below lower limit<br>
+        <span style="color:{ORANGE}">■</span> Coral (Out of Range/High) — above upper limit<br>
+        <span style="color:{CRIT}">■</span> Red — critical danger zone
       </p>
       <div class="section-label" style="margin-top:2rem">Privacy</div>
       <p style="color:{MUTED};line-height:1.85;font-size:0.85rem">
