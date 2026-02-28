@@ -380,13 +380,44 @@ button[data-testid*="flt_"] {{
   font-size: 0 !important;
   cursor: pointer !important;
 }}
-#MainMenu, footer, .stDeployButton {{ visibility: hidden; }}
-[data-testid="stHeader"] {{ display: none !important; }}
-[data-testid="stToolbar"] {{ display: none !important; }}
+/* Hide branding/deploy clutter but KEEP the sidebar toggle button visible.
+   .stAppToolbar contains the collapse arrow — never display:none the whole thing. */
+#MainMenu {{ visibility: hidden; }}
+footer {{ visibility: hidden; }}
+.stDeployButton {{ display: none !important; }}
 [data-testid="stDecoration"] {{ display: none !important; }}
 [data-testid="stStatusWidget"] {{ display: none !important; }}
-.stAppToolbar {{ display: none !important; }}
-header[data-testid="stHeader"] {{ display: none !important; }}
+
+/* Hide the top header bar (gradient bar at very top) but not the toolbar row */
+[data-testid="stHeader"] {{ background: none !important; }}
+header[data-testid="stHeader"] {{ background: none !important; height: 0 !important; min-height: 0 !important; }}
+
+/* Keep the app toolbar visible (it holds the sidebar toggle), but strip its background */
+.stAppToolbar {{
+  background: transparent !important;
+  box-shadow: none !important;
+}}
+[data-testid="stToolbar"] {{
+  background: transparent !important;
+  box-shadow: none !important;
+}}
+
+/* Hide only the inner toolbar items we don't want (viewer badge, share button) */
+[data-testid="stToolbarActions"] {{ display: none !important; }}
+
+/* Make sure the sidebar collapse/expand button is always visible and clickable */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarNavToggle"],
+button[aria-label="Collapse sidebar"],
+button[aria-label="Expand sidebar"],
+button[aria-label="Open sidebar"],
+button[kind="header"] {{
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  z-index: 999999 !important;
+}}
 
 /* Load Material Symbols Rounded so icon text never shows as raw ligature */
 @font-face {{
