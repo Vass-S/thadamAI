@@ -79,101 +79,112 @@ RED_Z    = "rgba(249,123,90,0.08)"
 # ─────────────────────────────────────────────
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
-/* Force color-scheme to light */
-:root {{
-  color-scheme: light only !important;
-  --bg:{BG};--surface:{SURFACE};--surface2:{SURFACE2};--border:{BORDER};
-  --accent:{ACCENT};--blue:{BLUE};--purple:{PURPLE};--orange:{ORANGE};
-  --green:{GREEN};--amber:{AMBER};--red:{RED};--crit:{CRIT};
-  --text:{TEXT};--muted:{MUTED};--light:{LIGHT};
-}}
-
-@media (prefers-color-scheme: dark) {{
-  html, body, .stApp, [data-testid="stAppViewContainer"],
-  [data-testid="stAppViewBlockContainer"], section[data-testid="stMain"] {{
-    background-color: {BG} !important;
-    color: {TEXT} !important;
-  }}
-}}
-
-html, body, .stApp, .main,
-.block-container, [data-testid="stAppViewContainer"],
-[data-testid="stAppViewBlockContainer"],
-[data-testid="stMainBlockContainer"],
-[data-testid="block-container"],
-.appview-container, .main .block-container,
-section[data-testid="stMain"],
-section[data-testid="stMain"] > div,
-div[class*="block-container"],
-div[class*="appview"],
-div.stApp,
-.main > div,
-[data-testid="stVerticalBlock"],
-[data-testid="stVerticalBlockBorderWrapper"],
-[data-testid="stHorizontalBlock"],
-.element-container,
-.stMarkdown {{
+/* ── Base ── */
+html, body, .stApp {{
   background-color: {BG} !important;
   color: {TEXT} !important;
   font-family: 'DM Sans', sans-serif !important;
 }}
 
-p, span, label, h1, h2, h3, h4, h5, h6,
-.stMarkdown p, .stMarkdown span,
-[data-testid="stMarkdownContainer"],
-[data-testid="stMarkdownContainer"] p,
-[data-testid="stMarkdownContainer"] span,
-[data-testid="stText"],
-[data-testid="stWidgetLabel"],
-[data-testid="stWidgetLabel"] p,
-[data-testid="stWidgetLabel"] label,
-.stRadio label, .stSelectbox label,
-.stMultiSelect label, .stTextInput label,
-.stNumberInput label {{
+/* ── Sidebar ── */
+section[data-testid="stSidebar"] {{
+  background-color: {SURFACE} !important;
+  border-right: 1px solid {BORDER} !important;
+}}
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] div {{
+  color: {TEXT} !important;
+}}
+
+/* ── Main content background ── */
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewBlockContainer"],
+[data-testid="stMainBlockContainer"],
+section[data-testid="stMain"] {{
+  background-color: {BG} !important;
+}}
+
+/* ── Typography ── */
+p, label, h1, h2, h3, h4, h5, h6 {{
   color: {TEXT} !important;
   font-family: 'DM Sans', sans-serif !important;
 }}
 
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"] > div,
-section[data-testid="stSidebar"] .stSidebarContent {{
-  background-color: {SURFACE} !important;
-  border-right: 1px solid {BORDER} !important;
-  box-shadow: 2px 0 12px rgba(0,0,0,0.04) !important;
+/* ── Tabs — fix overlap by ensuring overflow visible and no position conflicts ── */
+.stTabs [data-baseweb="tab-list"] {{
+  border-bottom: 1px solid {BORDER} !important;
+  background: transparent !important;
+  gap: 0 !important;
+  overflow: visible !important;
 }}
-section[data-testid="stSidebar"] * {{
+.stTabs [data-baseweb="tab"] {{
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: {MUTED} !important;
+  font-size: 0.82rem !important;
+  font-weight: 500 !important;
+  padding: 0.6rem 1.2rem !important;
+  border-bottom: 2px solid transparent !important;
+  overflow: visible !important;
+  position: static !important;
+}}
+.stTabs [aria-selected="true"] {{
   color: {TEXT} !important;
-  background-color: transparent !important;
+  border-bottom: 2px solid {ACCENT} !important;
 }}
-section[data-testid="stSidebar"] .stRadio > div {{
-  background-color: transparent !important;
+.stTabs [data-baseweb="tab-panel"] {{
+  background: transparent !important;
+  padding-top: 1rem !important;
 }}
 
-.stRadio [data-baseweb="radio"] label span,
-.stRadio label {{
+/* ── Expander ── */
+[data-testid="stExpander"] summary {{
+  background-color: {SURFACE} !important;
+  border: 1px solid {BORDER} !important;
+  border-radius: 10px !important;
   color: {TEXT} !important;
+}}
+[data-testid="stExpander"] > div:last-child {{
+  background-color: {SURFACE} !important;
+  border: 1px solid {BORDER} !important;
+  border-top: none !important;
+  border-radius: 0 0 10px 10px !important;
 }}
 
-div[data-baseweb="popover"],
-div[data-baseweb="menu"],
-div[data-baseweb="select"],
-div[data-baseweb="select"] div,
-[data-baseweb="base-input"],
-[data-baseweb="input"] {{
-  background-color: {SURFACE} !important;
-  color: {TEXT} !important;
+/* ── Buttons ── */
+.stButton > button {{
+  background-color: {TEXT} !important;
+  border: none !important;
+  color: #fff !important;
+  font-size: 0.82rem !important;
+  border-radius: 10px !important;
+  padding: 0.45rem 1.2rem !important;
+  transition: background 0.15s !important;
 }}
-div[data-baseweb="option"] {{
-  background-color: {SURFACE} !important;
-  color: {TEXT} !important;
+.stButton > button:hover {{
+  background-color: {ACCENT} !important;
 }}
-div[data-baseweb="option"]:hover {{
-  background-color: {LIGHT} !important;
+.stButton > button[kind="primary"] {{
+  background-color: {ACCENT} !important;
+}}
+.stDownloadButton > button {{
+  background: transparent !important;
+  border: 1px solid {BORDER} !important;
+  color: {MUTED} !important;
+  font-size: 0.75rem !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}}
+.stDownloadButton > button:hover {{
+  color: {TEXT} !important;
+  background: {LIGHT} !important;
 }}
 
-.stSelectbox > div > div,
+/* ── Inputs ── */
 .stSelectbox [data-baseweb="select"] > div,
 .stTextInput > div > div > input,
 .stNumberInput > div > div > input,
@@ -183,259 +194,57 @@ textarea {{
   color: {TEXT} !important;
   border-radius: 10px !important;
 }}
-.stSelectbox > div > div:focus-within,
-.stTextInput > div > div:focus-within,
-.stNumberInput > div > div:focus-within {{
-  border-color: {ACCENT} !important;
-  box-shadow: 0 0 0 3px rgba(78,205,196,0.12) !important;
-}}
-
-.streamlit-expanderHeader,
-details summary,
-[data-testid="stExpander"] summary {{
+div[data-baseweb="option"] {{
   background-color: {SURFACE} !important;
-  border: 1px solid {BORDER} !important;
-  border-radius: 12px !important;
-  font-size: 0.85rem !important;
-  color: {TEXT} !important;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.03) !important;
-}}
-[data-testid="stExpander"] > div:last-child {{
-  background-color: {SURFACE} !important;
-  border: 1px solid {BORDER} !important;
-  border-top: none !important;
-  border-radius: 0 0 12px 12px !important;
-}}
-
-/* ── FIX: keyboard_double_arrow_right text on expander hover ──
-   Streamlit renders the toggle icon as a <span> with font-family
-   'Material Symbols Rounded'. When the font hasn't loaded yet the
-   raw ligature text ("keyboard_double_arrow_right") shows.
-   We: (a) load the font, (b) hide any bare text nodes in summary,
-   (c) ensure the icon span itself uses the correct font. */
-[data-testid="stExpander"] summary p,
-[data-testid="stExpander"] summary span:not([data-testid]),
-.streamlit-expanderHeader p,
-.streamlit-expanderHeader span:not([data-testid]) {{
-  font-family: 'DM Sans', sans-serif !important;
-}}
-/* The actual Material icon element — keep it as icon font */
-[data-testid="stExpanderToggleIcon"],
-[data-testid="stExpander"] summary [class*="icon"],
-[data-testid="stExpander"] summary svg ~ span {{
-  font-family: 'Material Symbols Rounded', sans-serif !important;
-  font-size: 1.1rem !important;
-  color: {MUTED} !important;
-}}
-
-.stTabs [data-baseweb="tab-list"] {{
-  border-bottom: 1px solid {BORDER} !important;
-  gap: 0 !important;
-  background: transparent !important;
-}}
-.stTabs [data-baseweb="tab"] {{
-  background: transparent !important;
-  border-radius: 0 !important;
-  color: {MUTED} !important;
-  font-family: 'DM Sans', sans-serif !important;
-  font-size: 0.82rem !important;
-  font-weight: 500 !important;
-  padding: 0.75rem 1.6rem !important;
-  border-bottom: 2px solid transparent !important;
-  transition: color 0.15s !important;
-}}
-.stTabs [aria-selected="true"] {{
-  color: {TEXT} !important;
-  border-bottom: 2px solid {ACCENT} !important;
-}}
-.stTabs [data-baseweb="tab"]:hover {{
   color: {TEXT} !important;
 }}
-.stTabs [data-baseweb="tab-panel"] {{
-  background: transparent !important;
-  padding-top: 1rem !important;
+div[data-baseweb="option"]:hover {{
+  background-color: {LIGHT} !important;
 }}
 
-.stButton > button {{
-  background-color: {TEXT} !important;
-  border: none !important;
-  color: #fff !important;
-  font-family: 'DM Sans', sans-serif !important;
-  font-size: 0.82rem !important;
-  font-weight: 500 !important;
-  border-radius: 10px !important;
-  padding: 0.45rem 1.2rem !important;
-  transition: all 0.15s ease !important;
-  box-shadow: 0 2px 8px rgba(26,26,46,0.15) !important;
-}}
-.stButton > button:hover {{
-  background-color: {ACCENT} !important;
-  color: #fff !important;
-  box-shadow: 0 4px 16px rgba(78,205,196,0.35) !important;
-  transform: translateY(-1px) !important;
-}}
-.stButton > button[kind="primary"] {{
-  background-color: {ACCENT} !important;
-  color: #fff !important;
-}}
-
-.stDownloadButton > button {{
-  background: transparent !important;
-  border: 1px solid {BORDER} !important;
-  color: {MUTED} !important;
-  font-family: 'DM Mono', monospace !important;
-  font-size: 0.66rem !important;
-  border-radius: 8px !important;
-  box-shadow: none !important;
-}}
-.stDownloadButton > button:hover {{
-  border-color: {MUTED} !important;
-  color: {TEXT} !important;
-  background: {LIGHT} !important;
-}}
-
+/* ── File uploader ── */
 .stFileUploader > div {{
   background: {SURFACE} !important;
   border: 2px dashed {BORDER} !important;
   border-radius: 16px !important;
 }}
-.stFileUploader > div:hover {{
-  border-color: {ACCENT} !important;
-}}
-.stFileUploader label, .stFileUploader span,
-[data-testid="stFileUploadDropzone"] * {{
-  color: {MUTED} !important;
-  background: transparent !important;
-}}
 
+/* ── Dataframe / charts ── */
 .stDataFrame {{
   border: 1px solid {BORDER} !important;
   border-radius: 12px !important;
   overflow: hidden !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.03) !important;
 }}
-[data-testid="stDataFrame"] > div {{
-  background: {SURFACE} !important;
-}}
-
 .stPlotlyChart {{
   border: 1px solid {BORDER} !important;
   border-radius: 16px !important;
   overflow: hidden !important;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.04) !important;
-  background: {SURFACE} !important;
-}}
-.js-plotly-plot, .plotly, .plot-container {{
   background: {SURFACE} !important;
 }}
 
+/* ── Alerts ── */
+div[data-testid="stAlert"] {{
+  border-radius: 12px !important;
+}}
+
+/* ── Progress bar ── */
 .stProgress > div > div > div > div {{
   background: {ACCENT} !important;
   border-radius: 4px !important;
 }}
-.stProgress > div > div > div {{
-  background: {BORDER} !important;
-  border-radius: 4px !important;
-}}
 
-div[data-testid="stAlert"] {{
-  border-radius: 12px !important;
-  background: {SURFACE} !important;
-}}
-div[data-baseweb="notification"] {{
-  background: {SURFACE} !important;
-  border-radius: 12px !important;
-}}
-
-div[data-testid="stSpinner"] > div {{
-  border-top-color: {ACCENT} !important;
-}}
-
-.stCaptionContainer p, [data-testid="stCaptionContainer"] p {{
-  color: {MUTED} !important;
-  font-size: 0.78rem !important;
-}}
-
+/* ── Tags (multiselect) ── */
 div[data-baseweb="tag"] {{
-  background: rgba(78,205,196,0.1) !important;
-  border: 1px solid rgba(78,205,196,0.25) !important;
+  background: rgba(78,205,196,0.12) !important;
   border-radius: 6px !important;
 }}
-div[data-baseweb="tag"] span {{
-  color: {ACCENT} !important;
-}}
 
-[data-testid="stWidgetLabel"] svg {{ fill: {MUTED} !important; }}
+/* ── Hide only deploy/footer chrome, leave sidebar toggle alone ── */
+#MainMenu {{ visibility: hidden; }}
+footer {{ visibility: hidden; }}
+.stDeployButton {{ display: none !important; }}
 
-[data-testid="stButton"] button[kind="secondary"].filter-btn,
-button[data-testid*="flt_"] {{
-  opacity: 0 !important;
-  height: 0 !important;
-  padding: 0 !important;
-  margin: -4px 0 0 !important;
-  min-height: 0 !important;
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  font-size: 0 !important;
-  cursor: pointer !important;
-}}
-/* ── Hide ALL Streamlit chrome cleanly ── */
-#MainMenu, footer, .stDeployButton {{ display: none !important; }}
-[data-testid="stHeader"],
-header[data-testid="stHeader"],
-[data-testid="stToolbar"],
-[data-testid="stDecoration"],
-[data-testid="stStatusWidget"],
-[data-testid="stToolbarActions"],
-.stAppToolbar {{ display: none !important; }}
-
-/* Hide Streamlit's own sidebar toggle — our custom JS arrow replaces it */
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="stSidebarNavToggle"],
-button[aria-label="Collapse sidebar"],
-button[aria-label="Expand sidebar"],
-button[aria-label="Open sidebar"] {{ display: none !important; }}
-
-/* ── Custom floating sidebar arrow tab ── */
-#bip-sidebar-toggle {{
-  position: fixed;
-  top: 50%;
-  left: 0;
-  transform: translateY(-50%);
-  z-index: 999999;
-  width: 20px;
-  height: 56px;
-  background: {SURFACE};
-  border: 1px solid {BORDER};
-  border-left: none;
-  border-radius: 0 10px 10px 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: 3px 0 12px rgba(0,0,0,0.08);
-  transition: all 0.2s ease;
-  font-size: 13px;
-  color: {MUTED};
-  user-select: none;
-}}
-#bip-sidebar-toggle:hover {{
-  background: {LIGHT};
-  color: {ACCENT};
-  width: 24px;
-  box-shadow: 3px 0 16px rgba(78,205,196,0.22);
-}}
-
-/* Load Material Symbols Rounded so icon text never shows as raw ligature */
-@font-face {{
-  font-family: 'Material Symbols Rounded';
-  font-style: normal;
-  font-weight: 100 700;
-  src: url(https://fonts.gstatic.com/s/materialsymbolsrounded/v215/syl0-zNym6-2Uc0-QCMAvzGDpWzNpoxzqtGckMXPBGwxHEB-ZT7TzPMB5FH6E-gVSrLlHQ.woff2) format('woff2');
-}}
-
-/* ── Custom component classes ── */
+/* ── Custom layout classes ── */
 .bip-header {{
   display: flex; align-items: center; gap: 14px;
   padding-bottom: 1.5rem; margin-bottom: 2rem;
@@ -443,7 +252,7 @@ button[aria-label="Open sidebar"] {{ display: none !important; }}
 }}
 .bip-header h1 {{
   font-size: 1.55rem !important; font-weight: 700 !important;
-  color: {TEXT} !important; margin: 0 !important; letter-spacing: -0.5px;
+  color: {TEXT} !important; margin: 0 !important;
 }}
 .bip-header .sub {{
   font-family: 'DM Mono', monospace; font-size: 0.6rem; letter-spacing: 3px;
@@ -466,16 +275,8 @@ button[aria-label="Open sidebar"] {{ display: none !important; }}
   text-transform: uppercase; color: {MUTED}; display: block; margin-bottom: 6px;
 }}
 .patient-card .field value {{ font-size: 1.05rem; font-weight: 600; color: {TEXT}; }}
-.summary-grid {{ display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem; margin-bottom: 1.5rem; }}
-.summary-card {{
-  background: {SURFACE}; border: 1px solid {BORDER};
-  border-radius: 16px; padding: 1.25rem; text-align: center;
-  transition: transform 0.15s, box-shadow 0.15s;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
-}}
-.summary-card:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.08); }}
-.summary-card .num {{ font-size: 2.4rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1px; }}
-.summary-card .lbl {{ font-size: 0.73rem; color: {MUTED}; margin-top: 6px; font-weight: 400; }}
+.section-label {{ font-family: 'DM Mono', monospace; font-size: 0.57rem; letter-spacing: 3px;
+  text-transform: uppercase; color: {MUTED}; margin: 1.5rem 0 0.75rem; }}
 .callout {{
   background: {LIGHT}; border: 1px solid {BORDER};
   border-left: 3px solid {ACCENT}; border-radius: 0 12px 12px 0;
@@ -488,27 +289,6 @@ button[aria-label="Open sidebar"] {{ display: none !important; }}
 }}
 .range-legend {{ display: inline-flex; align-items: center; gap: 6px; font-size: 0.7rem; color: {MUTED}; margin-bottom: 0.4rem; }}
 .dot {{ width: 9px; height: 9px; border-radius: 50%; display: inline-block; }}
-.bm-row {{
-  background: {SURFACE}; border: 1px solid {BORDER};
-  border-radius: 14px; padding: 1.1rem 1.4rem; margin-bottom: 0.75rem;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.03);
-}}
-.bm-row-name {{ font-size: 0.95rem; font-weight: 600; color: {TEXT}; }}
-.bm-row-unit {{ font-size: 0.75rem; color: {MUTED}; margin-top: 1px; }}
-.pill-track {{
-  position: relative; height: 32px; background: {LIGHT};
-  border: 1.5px dashed {BORDER}; border-radius: 20px;
-  margin: 8px 0 4px;
-}}
-.pill-optimal {{
-  position: absolute; height: 100%; background: rgba(78,205,196,0.15);
-  border: 1.5px dashed {ACCENT}; border-radius: 20px;
-}}
-.pill-dot {{
-  position: absolute; top: 50%; transform: translate(-50%,-50%);
-  width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid {SURFACE};
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 2;
-}}
 </style>
 """, unsafe_allow_html=True)
 
