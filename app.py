@@ -390,92 +390,7 @@ def _build_alias_index() -> dict:
                 if a:
                     idx[a] = canonical
 
-    EXTRA = {
-        "abs. neutrophil count": "Absolute Neutrophil Count",
-        "abs neutrophil count":  "Absolute Neutrophil Count",
-        "abs.neutrophil count":  "Absolute Neutrophil Count",
-        "absolute neutrophils":  "Absolute Neutrophil Count",
-        "abs. lymphocyte count": "Absolute Lymphocyte Count",
-        "abs lymphocyte count":  "Absolute Lymphocyte Count",
-        "absolute lymphocytes":  "Absolute Lymphocyte Count",
-        "abs. monocyte count":   "Absolute Monocyte Count",
-        "abs monocyte count":    "Absolute Monocyte Count",
-        "absolute monocytes":    "Absolute Monocyte Count",
-        "abs. eosinophil count": "Absolute Eosinophil Count",
-        "abs eosinophil count":  "Absolute Eosinophil Count",
-        "absolute eosinophils":  "Absolute Eosinophil Count",
-        "abs. basophil count":   "Absolute Basophil Count",
-        "abs basophil count":    "Absolute Basophil Count",
-        "absolute basophils":    "Absolute Basophil Count",
-        "haemoglobin":           "Haemoglobin",
-        "hemoglobin":            "Haemoglobin",
-        "hgb":                   "Haemoglobin",
-        "hb":                    "Haemoglobin",
-        "total wbc count":       "Total WBC Count",
-        "wbc count":             "Total WBC Count",
-        "total leucocyte count": "Total WBC Count",
-        "tlc":                   "Total WBC Count",
-        "total wbc":             "Total WBC Count",
-        "platelet count":        "Platelet Count",
-        "platelets":             "Platelet Count",
-        "plt":                   "Platelet Count",
-        "rdw-cv":                "RDW-CV",
-        "rdw":                   "RDW-CV",
-        "esr":                   "ESR",
-        "total cholesterol":     "Total Cholesterol",
-        "hdl":                   "HDL Cholesterol",
-        "ldl":                   "LDL Cholesterol",
-        "tg":                    "Triglycerides",
-        "trigs":                 "Triglycerides",
-        "vldl":                  "VLDL Cholesterol",
-        "non-hdl cholesterol":   "Non HDL Cholesterol",
-        "non hdl-c":             "Non HDL Cholesterol",
-        "ast":                   "AST (SGOT)",
-        "sgot":                  "AST (SGOT)",
-        "alt":                   "ALT (SGPT)",
-        "sgpt":                  "ALT (SGPT)",
-        "alp":                   "Alkaline Phosphatase",
-        "alkaline phosphatase":  "Alkaline Phosphatase",
-        "ggt":                   "Gamma GT",
-        "ggtp":                  "Gamma GT",
-        "total bilirubin":       "Bilirubin (Total)",
-        "bilirubin total":       "Bilirubin (Total)",
-        "direct bilirubin":      "Bilirubin (Direct)",
-        "bilirubin direct":      "Bilirubin (Direct)",
-        "indirect bilirubin":    "Bilirubin (Indirect)",
-        "albumin":               "Albumin",
-        "globulin":              "Globulin",
-        "total protein":         "Total Protein",
-        "a/g ratio":             "A/G Ratio",
-        "urea":                  "Urea (Serum)",
-        "blood urea":            "Urea (Serum)",
-        "creatinine":            "Creatinine (Serum)",
-        "serum creatinine":      "Creatinine (Serum)",
-        "uric acid":             "Uric Acid",
-        "tsh":                   "TSH",
-        "ft3":                   "Free T3",
-        "free t3":               "Free T3",
-        "ft4":                   "Free T4",
-        "free t4":               "Free T4",
-        "vitamin d":             "Vitamin D (25-OH)",
-        "25-oh vitamin d":       "Vitamin D (25-OH)",
-        "25(oh)d":               "Vitamin D (25-OH)",
-        "b12":                   "Vitamin B12",
-        "fasting glucose":       "Glucose (Fasting)",
-        "blood glucose fasting": "Glucose (Fasting)",
-        "fbs":                   "Glucose (Fasting)",
-        "hba1c":                 "HbA1c",
-        "glycated haemoglobin":  "HbA1c",
-        "pp glucose":            "Glucose (Post Prandial 2hr)",
-        "pbg":                   "Glucose (Post Prandial 2hr)",
-        "hscrp":                 "hsCRP",
-        "hs-crp":                "hsCRP",
-        "c reactive protein":    "C Reactive Protein",
-        "crp":                   "C Reactive Protein",
-    }
-    for k, v in EXTRA.items():
-        idx.setdefault(k, v)
-
+    # Aliases are fully defined in Biomarker_dictionary_csv.csv
     return idx
 
 
@@ -611,6 +526,15 @@ def render_patient_card(history: pd.DataFrame):
 # ─────────────────────────────────────────────
 
 def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
+    """
+    Radial chart with 4 concentric zones (like the reference image):
+      Inner  = Optimal  (teal)
+      Ring 2 = Normal   (blue)
+      Ring 3 = High Risk (amber)
+      Outer  = Diseased / Out of Range (red/orange)
+    Each biomarker is placed as a dot at the radius matching its zone.
+    Biomarkers are arranged clockwise, grouped by zone.
+    """
     df = snapshot.copy()
     df["unit"] = df["unit"].apply(clean_unit)
     df["_ord"] = df["status"].apply(_status_sort)
@@ -628,152 +552,169 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         st.info("No biomarkers match this filter.")
         return
 
-    radii = []
-    for _, row in df.iterrows():
+    # Zone radii — 4 rings from centre out
+    R_OPTIMAL   = 0.28   # inner green ring
+    R_NORMAL    = 0.52   # normal/good ring (blue)
+    R_HIGH_RISK = 0.74   # high-risk ring (amber)
+    R_DISEASED  = 0.92   # outer diseased ring (red)
+
+    # Zone colours
+    C_OPTIMAL   = "#4ecdc4"  # teal
+    C_NORMAL    = "#74b9e8"  # blue
+    C_HIGH_RISK = "#f5a623"  # amber
+    C_DISEASED  = "#e53e3e"  # red
+
+    def zone_for_status(s):
+        s = str(s)
+        if "CRITICAL" in s:           return R_DISEASED,  C_DISEASED
+        if "HIGH" in s or "LOW" in s: return R_HIGH_RISK, C_HIGH_RISK
+        return R_NORMAL, C_NORMAL  # default Normal
+
+    # Per-biomarker: check if value is in optimal range
+    def get_zone(row):
         bm = bm_lookup(row["test_name"])
-        o_lo = bm.get("optimal_min"); o_hi = bm.get("optimal_max")
-        n_lo = bm.get("normal_min");  n_hi = bm.get("normal_max")
+        o_min = bm.get("optimal_min"); o_max = bm.get("optimal_max")
         try:
             val = float(row["value"])
         except (ValueError, TypeError):
-            radii.append(0.5); continue
+            return zone_for_status(row["status"])
+        s = str(row.get("status",""))
+        if "CRITICAL" in s or "HIGH" in s or "LOW" in s:
+            return zone_for_status(s)
+        # Check if in optimal range
+        in_optimal = True
+        if o_min is not None and val < o_min: in_optimal = False
+        if o_max is not None and val > o_max: in_optimal = False
+        if in_optimal and (o_min is not None or o_max is not None):
+            return R_OPTIMAL, C_OPTIMAL
+        return R_NORMAL, C_NORMAL
 
-        lo = o_lo if o_lo is not None else n_lo
-        hi = o_hi if o_hi is not None else n_hi
-
-        if hi is not None and lo is not None and hi > lo:
-            mid = (lo + hi) / 2
-            r = 0.5 + (val - mid) / (hi - lo) * 0.4
-        elif hi is not None and hi > 0:
-            r = (val / hi) * 0.6
-        elif lo is not None and lo > 0:
-            r = min(0.9, lo / max(val, 0.001) * 0.4 + 0.3)
-        else:
-            r = 0.5
-        radii.append(max(0.08, min(0.98, r)))
+    zones   = [get_zone(row) for _, row in df.iterrows()]
+    radii   = [z[0] for z in zones]
+    colors  = [z[1] for z in zones]
+    sizes   = [14 if r in (R_OPTIMAL, R_NORMAL) else 16 for r in radii]
 
     angles_deg = [i * 360 / n for i in range(n)]
-
-    def dot_color(s):
-        s = str(s)
-        if "CRITICAL" in s: return CRIT
-        if "HIGH"     in s: return ORANGE
-        if "LOW"      in s: return PURPLE
-        return ACCENT
-
-    colors = [dot_color(s) for s in df["status"]]
-    sizes  = [18 if "CRITICAL" in str(s) or "HIGH" in str(s) or "LOW" in str(s) else 13
-              for s in df["status"]]
 
     def fmt_val(v):
         try: return f"{float(v):.4g}"
         except: return str(v)
 
     hover_texts = [
-        f"<b>{r['test_name']}</b><br>Value: {fmt_val(r['value'])} {r['unit']}<br>Status: {r.get('status','Normal')}"
-        for _, r in df.iterrows()
+        f"<b>{row['test_name']}</b><br>Value: {fmt_val(row['value'])} {row['unit']}"
+        f"<br>Status: {row.get('status','Normal') or 'Normal'}"
+        for _, row in df.iterrows()
     ]
 
     fig = go.Figure()
-    theta_full = list(range(0, 361, 3))
+    theta_full = list(range(0, 361, 2))
 
-    fig.add_trace(go.Scatterpolar(
-        r=[1.0]*len(theta_full), theta=theta_full,
-        fill="toself", fillcolor="rgba(249,123,90,0.06)",
-        line=dict(color="rgba(249,123,90,0.2)", width=1, dash="dot"),
-        showlegend=False, hoverinfo="skip", mode="lines",
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=[0.72]*len(theta_full), theta=theta_full,
-        fill="toself", fillcolor="rgba(116,185,232,0.06)",
-        line=dict(color=BORDER, width=1, dash="dot"),
-        showlegend=False, hoverinfo="skip", mode="lines",
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=[0.35]*len(theta_full), theta=theta_full,
-        fill="toself", fillcolor="rgba(78,205,196,0.10)",
-        line=dict(color=ACCENT, width=1.2, dash="dash"),
-        showlegend=False, hoverinfo="skip", mode="lines",
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=[0.55]*len(theta_full), theta=theta_full,
-        fill="none",
-        line=dict(color=BORDER, width=0.8, dash="dot"),
-        showlegend=False, hoverinfo="skip", mode="lines",
-    ))
+    # Draw 4 filled zone rings from outside in
+    zone_rings = [
+        (R_DISEASED,  "rgba(229,62,62,0.08)",   "rgba(229,62,62,0.30)",   "Out of Range"),
+        (R_HIGH_RISK, "rgba(245,166,35,0.08)",   "rgba(245,166,35,0.30)",  "High Risk"),
+        (R_NORMAL,    "rgba(116,185,232,0.08)",   "rgba(116,185,232,0.30)", "Normal"),
+        (R_OPTIMAL,   "rgba(78,205,196,0.13)",    "rgba(78,205,196,0.45)",  "Optimal"),
+    ]
+    for r_val, fill_col, line_col, label in zone_rings:
+        fig.add_trace(go.Scatterpolar(
+            r=[r_val] * len(theta_full), theta=theta_full,
+            fill="toself", fillcolor=fill_col,
+            line=dict(color=line_col, width=1.5),
+            showlegend=False, hoverinfo="skip", mode="lines",
+            name=label,
+        ))
 
-    spread = 360 / n
-    for i, (_, row) in enumerate(df.iterrows()):
-        s = str(row["status"])
-        if "HIGH" in s or "LOW" in s or "CRITICAL" in s:
-            c = "rgba(249,123,90,0.09)" if "HIGH" in s or "CRITICAL" in s else "rgba(192,132,252,0.09)"
-            t = [angles_deg[i] - spread*0.45, angles_deg[i] - spread*0.45,
-                 angles_deg[i] + spread*0.45, angles_deg[i] + spread*0.45]
+    # Zone divider grid lines (spokes) between biomarker slots
+    if n > 0:
+        spread = 360 / n
+        for i in range(n):
+            spoke_angle = angles_deg[i] - spread / 2
             fig.add_trace(go.Scatterpolar(
-                r=[0, 1.02, 1.02, 0], theta=t,
-                fill="toself", fillcolor=c,
-                line=dict(width=0),
+                r=[0, 1.0], theta=[spoke_angle, spoke_angle],
+                mode="lines",
+                line=dict(color="rgba(180,180,200,0.25)", width=1),
                 showlegend=False, hoverinfo="skip",
             ))
 
+    # Dots
     fig.add_trace(go.Scatterpolar(
         r=radii, theta=angles_deg,
         mode="markers",
-        marker=dict(color=colors, size=sizes, line=dict(color=SURFACE, width=2.5)),
+        marker=dict(
+            color=colors, size=sizes,
+            line=dict(color="#ffffff", width=2.5),
+            opacity=0.92,
+        ),
         customdata=hover_texts,
         hovertemplate="%{customdata}<extra></extra>",
         showlegend=False,
     ))
 
-    zone_annotations = [
-        dict(text="Optimal", xref="paper", yref="paper", x=0.98, y=0.62,
-             showarrow=False, font=dict(size=10, color=ACCENT, family="DM Sans"), xanchor="right"),
-        dict(text="Normal", xref="paper", yref="paper", x=0.98, y=0.53,
-             showarrow=False, font=dict(size=10, color=BLUE, family="DM Sans"), xanchor="right"),
-        dict(text="Out of Range", xref="paper", yref="paper", x=0.98, y=0.44,
-             showarrow=False, font=dict(size=10, color=ORANGE, family="DM Sans"), xanchor="right"),
-    ]
+    # Count per zone for centre annotation
+    n_oor      = sum(1 for r in radii if r == R_DISEASED)
+    n_highrisk = sum(1 for r in radii if r == R_HIGH_RISK)
+    n_normal   = sum(1 for r in radii if r == R_NORMAL)
+    n_optimal  = sum(1 for r in radii if r == R_OPTIMAL)
 
-    legend_items = [
-        ("Optimal",      ACCENT),
-        ("Normal",       BLUE),
-        ("Low",          PURPLE),
-        ("Out of Range", ORANGE),
-        ("Critical",     CRIT),
-    ]
-    legend_annotations = [
+    # Zone labels at ring midpoints (outside)
+    zone_label_annotations = [
+        dict(text="Optimal",      xref="paper", yref="paper", x=1.13, y=0.82,
+             showarrow=False, font=dict(size=10, color=C_OPTIMAL,   family="DM Sans"), xanchor="left"),
+        dict(text="Normal",       xref="paper", yref="paper", x=1.13, y=0.72,
+             showarrow=False, font=dict(size=10, color=C_NORMAL,    family="DM Sans"), xanchor="left"),
+        dict(text="High Risk",    xref="paper", yref="paper", x=1.13, y=0.62,
+             showarrow=False, font=dict(size=10, color=C_HIGH_RISK, family="DM Sans"), xanchor="left"),
+        dict(text="Out of Range", xref="paper", yref="paper", x=1.13, y=0.52,
+             showarrow=False, font=dict(size=10, color=C_DISEASED,  family="DM Sans"), xanchor="left"),
+        # Legend dots
+        dict(text="●", xref="paper", yref="paper", x=1.10, y=0.82,
+             showarrow=False, font=dict(size=14, color=C_OPTIMAL,   family="DM Sans"), xanchor="left"),
+        dict(text="●", xref="paper", yref="paper", x=1.10, y=0.72,
+             showarrow=False, font=dict(size=14, color=C_NORMAL,    family="DM Sans"), xanchor="left"),
+        dict(text="●", xref="paper", yref="paper", x=1.10, y=0.62,
+             showarrow=False, font=dict(size=14, color=C_HIGH_RISK, family="DM Sans"), xanchor="left"),
+        dict(text="●", xref="paper", yref="paper", x=1.10, y=0.52,
+             showarrow=False, font=dict(size=14, color=C_DISEASED,  family="DM Sans"), xanchor="left"),
+        # Centre count annotation
         dict(
-            text=f'<span style="color:{c}">●</span> {lbl}',
-            xref="paper", yref="paper",
-            x=1.02, y=0.95 - i*0.075,
+            text=f"<b style='font-size:42px;color:#1a1a2e'>{n_oor:02d}</b><br>"
+                 f"<span style='font-size:13px;color:#8a8aaa'>Biomarkers<br>Out of Range</span>",
+            xref="paper", yref="paper", x=0.5, y=0.5,
             showarrow=False,
-            font=dict(size=10, color=TEXT, family="DM Sans"),
-            xanchor="left",
-        )
-        for i, (lbl, c) in enumerate(legend_items)
+            font=dict(size=14, color="#1a1a2e", family="DM Sans"),
+            xanchor="center", yanchor="middle",
+            align="center",
+        ),
     ]
 
     fig.update_layout(
         polar=dict(
-            bgcolor=SURFACE,
-            radialaxis=dict(visible=False, range=[0, 1.2],
-                            showticklabels=False, showgrid=False, showline=False),
+            bgcolor="white",
+            radialaxis=dict(
+                visible=False, range=[0, 1.08],
+                showticklabels=False, showgrid=False, showline=False,
+            ),
             angularaxis=dict(
                 tickmode="array",
                 tickvals=angles_deg,
-                ticktext=[""]*n,
-                showgrid=True, gridcolor=BORDER, gridwidth=1,
-                linecolor=BORDER,
+                ticktext=[t[:12] + "…" if len(t) > 12 else t for t in df["test_name"]],
+                tickfont=dict(size=8, color="#8a8aaa", family="DM Sans"),
+                showgrid=False, gridcolor="rgba(0,0,0,0.05)",
+                linecolor="rgba(0,0,0,0.08)",
                 direction="clockwise", rotation=90,
             ),
         ),
-        paper_bgcolor=SURFACE,
-        font=dict(color=TEXT, family="DM Sans"),
-        margin=dict(l=20, r=130, t=20, b=20),
-        height=400,
+        paper_bgcolor="white",
+        font=dict(color="#1a1a2e", family="DM Sans"),
+        margin=dict(l=60, r=160, t=30, b=30),
+        height=460,
         showlegend=False,
-        annotations=legend_annotations + zone_annotations,
-        hoverlabel=dict(bgcolor=SURFACE, bordercolor=BORDER, font=dict(color=TEXT, family="DM Sans")),
+        annotations=zone_label_annotations,
+        hoverlabel=dict(
+            bgcolor="white", bordercolor="#e8e8ee",
+            font=dict(color="#1a1a2e", family="DM Sans"),
+        ),
     )
 
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
