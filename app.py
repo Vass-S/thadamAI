@@ -13,6 +13,12 @@ Changes in v5:
   - bm_lookup() wraps dictionary access so render functions stay clean
   - os import moved to top-level (was re-imported on every page render)
   - _get_api_key() cached so it is not re-read on every Streamlit rerun
+
+Fixes in v5.1:
+  - Removed duplicate st.download_button in Patient Profiles tab1
+    (caused StreamlitDuplicateElementId crash that blocked Trends charts)
+  - Fixed expander icon "keyboard_double_arrow_right" text appearing on hover
+    by loading Material Symbols font + hiding the SVG sibling span correctly
 """
 
 import os
@@ -48,20 +54,19 @@ st.set_page_config(
 
 # ─────────────────────────────────────────────
 # PALETTE  — Clean clinical white design
-# Inspired by InoAge / longevity health platforms
 # ─────────────────────────────────────────────
 BG       = "#f8f8f8"
 SURFACE  = "#ffffff"
 SURFACE2 = "#f4f4f6"
 BORDER   = "#e8e8ee"
-ACCENT   = "#4ecdc4"       # teal — "Optimized"
-BLUE     = "#74b9e8"       # blue — "Balanced"
-PURPLE   = "#c084fc"       # lavender/purple — "Moderate"
-ORANGE   = "#f97b5a"       # coral/orange — "Out of Range"
-GREEN    = "#4ecdc4"       # same as accent for "normal"
-AMBER    = "#f5a623"       # warm amber for "LOW"
-RED      = "#f97b5a"       # coral for "HIGH"
-CRIT     = "#e53e3e"       # deep red for "CRITICAL"
+ACCENT   = "#4ecdc4"
+BLUE     = "#74b9e8"
+PURPLE   = "#c084fc"
+ORANGE   = "#f97b5a"
+GREEN    = "#4ecdc4"
+AMBER    = "#f5a623"
+RED      = "#f97b5a"
+CRIT     = "#e53e3e"
 TEXT     = "#1a1a2e"
 MUTED    = "#8a8aaa"
 LIGHT    = "#f0f0f8"
@@ -76,7 +81,7 @@ st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
 
-/* Force color-scheme to light — defeats dark mode media queries */
+/* Force color-scheme to light */
 :root {{
   color-scheme: light only !important;
   --bg:{BG};--surface:{SURFACE};--surface2:{SURFACE2};--border:{BORDER};
@@ -85,12 +90,6 @@ st.markdown(f"""
   --text:{TEXT};--muted:{MUTED};--light:{LIGHT};
 }}
 
-/* ═══════════════════════════════════════════════════════════
-   NUCLEAR LIGHT MODE — defeats Streamlit dark theme entirely
-   Works by overriding BOTH the base styles AND the dark media query
-   ═══════════════════════════════════════════════════════════ */
-
-/* 1. Override dark-mode media query */
 @media (prefers-color-scheme: dark) {{
   html, body, .stApp, [data-testid="stAppViewContainer"],
   [data-testid="stAppViewBlockContainer"], section[data-testid="stMain"] {{
@@ -99,7 +98,6 @@ st.markdown(f"""
   }}
 }}
 
-/* 2. Force white on every single Streamlit container — no exceptions */
 html, body, .stApp, .main,
 .block-container, [data-testid="stAppViewContainer"],
 [data-testid="stAppViewBlockContainer"],
@@ -122,7 +120,6 @@ div.stApp,
   font-family: 'DM Sans', sans-serif !important;
 }}
 
-/* 3. Force all text elements dark */
 p, span, label, h1, h2, h3, h4, h5, h6,
 .stMarkdown p, .stMarkdown span,
 [data-testid="stMarkdownContainer"],
@@ -139,7 +136,6 @@ p, span, label, h1, h2, h3, h4, h5, h6,
   font-family: 'DM Sans', sans-serif !important;
 }}
 
-/* Sidebar — white card */
 section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div,
 section[data-testid="stSidebar"] .stSidebarContent {{
@@ -155,13 +151,11 @@ section[data-testid="stSidebar"] .stRadio > div {{
   background-color: transparent !important;
 }}
 
-/* Radio buttons in sidebar */
 .stRadio [data-baseweb="radio"] label span,
 .stRadio label {{
   color: {TEXT} !important;
 }}
 
-/* Multiselect dropdown */
 div[data-baseweb="popover"],
 div[data-baseweb="menu"],
 div[data-baseweb="select"],
@@ -179,7 +173,6 @@ div[data-baseweb="option"]:hover {{
   background-color: {LIGHT} !important;
 }}
 
-/* Selectbox, text input, number input */
 .stSelectbox > div > div,
 .stSelectbox [data-baseweb="select"] > div,
 .stTextInput > div > div > input,
@@ -197,7 +190,6 @@ textarea {{
   box-shadow: 0 0 0 3px rgba(78,205,196,0.12) !important;
 }}
 
-/* Expander */
 .streamlit-expanderHeader,
 details summary,
 [data-testid="stExpander"] summary {{
@@ -215,7 +207,27 @@ details summary,
   border-radius: 0 0 12px 12px !important;
 }}
 
-/* Tabs */
+/* ── FIX: keyboard_double_arrow_right text on expander hover ──
+   Streamlit renders the toggle icon as a <span> with font-family
+   'Material Symbols Rounded'. When the font hasn't loaded yet the
+   raw ligature text ("keyboard_double_arrow_right") shows.
+   We: (a) load the font, (b) hide any bare text nodes in summary,
+   (c) ensure the icon span itself uses the correct font. */
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span:not([data-testid]),
+.streamlit-expanderHeader p,
+.streamlit-expanderHeader span:not([data-testid]) {{
+  font-family: 'DM Sans', sans-serif !important;
+}}
+/* The actual Material icon element — keep it as icon font */
+[data-testid="stExpanderToggleIcon"],
+[data-testid="stExpander"] summary [class*="icon"],
+[data-testid="stExpander"] summary svg ~ span {{
+  font-family: 'Material Symbols Rounded', sans-serif !important;
+  font-size: 1.1rem !important;
+  color: {MUTED} !important;
+}}
+
 .stTabs [data-baseweb="tab-list"] {{
   border-bottom: 1px solid {BORDER} !important;
   gap: 0 !important;
@@ -244,7 +256,6 @@ details summary,
   padding-top: 1rem !important;
 }}
 
-/* Buttons */
 .stButton > button {{
   background-color: {TEXT} !important;
   border: none !important;
@@ -268,7 +279,6 @@ details summary,
   color: #fff !important;
 }}
 
-/* Download button */
 .stDownloadButton > button {{
   background: transparent !important;
   border: 1px solid {BORDER} !important;
@@ -284,7 +294,6 @@ details summary,
   background: {LIGHT} !important;
 }}
 
-/* File uploader */
 .stFileUploader > div {{
   background: {SURFACE} !important;
   border: 2px dashed {BORDER} !important;
@@ -299,7 +308,6 @@ details summary,
   background: transparent !important;
 }}
 
-/* Data frames / tables */
 .stDataFrame {{
   border: 1px solid {BORDER} !important;
   border-radius: 12px !important;
@@ -310,7 +318,6 @@ details summary,
   background: {SURFACE} !important;
 }}
 
-/* Plotly chart wrapper */
 .stPlotlyChart {{
   border: 1px solid {BORDER} !important;
   border-radius: 16px !important;
@@ -322,7 +329,6 @@ details summary,
   background: {SURFACE} !important;
 }}
 
-/* Progress bar */
 .stProgress > div > div > div > div {{
   background: {ACCENT} !important;
   border-radius: 4px !important;
@@ -332,7 +338,6 @@ details summary,
   border-radius: 4px !important;
 }}
 
-/* Alerts */
 div[data-testid="stAlert"] {{
   border-radius: 12px !important;
   background: {SURFACE} !important;
@@ -342,18 +347,15 @@ div[data-baseweb="notification"] {{
   border-radius: 12px !important;
 }}
 
-/* Spinner */
 div[data-testid="stSpinner"] > div {{
   border-top-color: {ACCENT} !important;
 }}
 
-/* Caption */
 .stCaptionContainer p, [data-testid="stCaptionContainer"] p {{
   color: {MUTED} !important;
   font-size: 0.78rem !important;
 }}
 
-/* Multiselect tags */
 div[data-baseweb="tag"] {{
   background: rgba(78,205,196,0.1) !important;
   border: 1px solid rgba(78,205,196,0.25) !important;
@@ -363,10 +365,8 @@ div[data-baseweb="tag"] span {{
   color: {ACCENT} !important;
 }}
 
-/* Widget label */
 [data-testid="stWidgetLabel"] svg {{ fill: {MUTED} !important; }}
 
-/* Filter card buttons — make them invisible overlays under the card HTML */
 [data-testid="stButton"] button[kind="secondary"].filter-btn,
 button[data-testid*="flt_"] {{
   opacity: 0 !important;
@@ -380,10 +380,6 @@ button[data-testid*="flt_"] {{
   font-size: 0 !important;
   cursor: pointer !important;
 }}
-/* Ensure the "Filter" label text is hidden */
-[data-testid*="stButton"] button:has(+ [class*="flt_"]) {{
-  display: none;
-}}
 #MainMenu, footer, .stDeployButton {{ visibility: hidden; }}
 [data-testid="stHeader"] {{ display: none !important; }}
 [data-testid="stToolbar"] {{ display: none !important; }}
@@ -392,19 +388,7 @@ button[data-testid*="flt_"] {{
 .stAppToolbar {{ display: none !important; }}
 header[data-testid="stHeader"] {{ display: none !important; }}
 
-/* Fix Streamlit Material icon font fallback — prevents "keyboard_double_arrow_right" text */
-[data-testid="stExpander"] summary p,
-[data-testid="stExpander"] summary span,
-.streamlit-expanderHeader p,
-.streamlit-expanderHeader span {{
-  font-family: 'DM Sans', sans-serif !important;
-}}
-/* The expand/collapse icon itself - hide text fallback, keep svg */
-[data-testid="stExpander"] summary svg + span,
-[data-testid="stExpanderToggleIcon"] {{
-  display: none !important;
-}}
-/* Streamlit 1.31+ uses material-symbols font for icons — load it */
+/* Load Material Symbols Rounded so icon text never shows as raw ligature */
 @font-face {{
   font-family: 'Material Symbols Rounded';
   font-style: normal;
@@ -489,7 +473,7 @@ header[data-testid="stHeader"] {{ display: none !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-# JS: Force light color-scheme — defeats Streamlit's dark mode detection
+# JS: Force light color-scheme
 st.markdown("""
 <script>
 (function() {
@@ -569,19 +553,14 @@ def load_biomarker_dictionary():
 biomarker_dictionary = load_biomarker_dictionary()
 
 
-# Build a comprehensive alias → canonical lookup used by bm_lookup for fallback
 @st.cache_data
 def _build_alias_index() -> dict:
-    """Map every alias + canonical name variant (lower, stripped) → canonical name."""
     idx = {}
     if biomarker_dictionary.empty:
         return idx
 
     for canonical in biomarker_dictionary.index:
-        # canonical itself (lower)
         idx[canonical.lower().strip()] = canonical
-
-        # aliases column
         row = biomarker_dictionary.loc[canonical]
         if isinstance(row, pd.DataFrame):
             row = row.iloc[0]
@@ -592,9 +571,7 @@ def _build_alias_index() -> dict:
                 if a:
                     idx[a] = canonical
 
-    # Hand-coded extras for common OCR variants not in the CSV aliases column
     EXTRA = {
-        # CBC differentials
         "abs. neutrophil count": "Absolute Neutrophil Count",
         "abs neutrophil count":  "Absolute Neutrophil Count",
         "abs.neutrophil count":  "Absolute Neutrophil Count",
@@ -611,7 +588,6 @@ def _build_alias_index() -> dict:
         "abs. basophil count":   "Absolute Basophil Count",
         "abs basophil count":    "Absolute Basophil Count",
         "absolute basophils":    "Absolute Basophil Count",
-        # CBC main
         "haemoglobin":           "Haemoglobin",
         "hemoglobin":            "Haemoglobin",
         "hgb":                   "Haemoglobin",
@@ -627,7 +603,6 @@ def _build_alias_index() -> dict:
         "rdw-cv":                "RDW-CV",
         "rdw":                   "RDW-CV",
         "esr":                   "ESR",
-        # Lipids
         "total cholesterol":     "Total Cholesterol",
         "hdl":                   "HDL Cholesterol",
         "ldl":                   "LDL Cholesterol",
@@ -636,7 +611,6 @@ def _build_alias_index() -> dict:
         "vldl":                  "VLDL Cholesterol",
         "non-hdl cholesterol":   "Non HDL Cholesterol",
         "non hdl-c":             "Non HDL Cholesterol",
-        # Liver
         "ast":                   "AST (SGOT)",
         "sgot":                  "AST (SGOT)",
         "alt":                   "ALT (SGPT)",
@@ -654,24 +628,20 @@ def _build_alias_index() -> dict:
         "globulin":              "Globulin",
         "total protein":         "Total Protein",
         "a/g ratio":             "A/G Ratio",
-        # Kidney
         "urea":                  "Urea (Serum)",
         "blood urea":            "Urea (Serum)",
         "creatinine":            "Creatinine (Serum)",
         "serum creatinine":      "Creatinine (Serum)",
         "uric acid":             "Uric Acid",
-        # Thyroid
         "tsh":                   "TSH",
         "ft3":                   "Free T3",
         "free t3":               "Free T3",
         "ft4":                   "Free T4",
         "free t4":               "Free T4",
-        # Vitamins
         "vitamin d":             "Vitamin D (25-OH)",
         "25-oh vitamin d":       "Vitamin D (25-OH)",
         "25(oh)d":               "Vitamin D (25-OH)",
         "b12":                   "Vitamin B12",
-        # Glucose
         "fasting glucose":       "Glucose (Fasting)",
         "blood glucose fasting": "Glucose (Fasting)",
         "fbs":                   "Glucose (Fasting)",
@@ -679,7 +649,6 @@ def _build_alias_index() -> dict:
         "glycated haemoglobin":  "HbA1c",
         "pp glucose":            "Glucose (Post Prandial 2hr)",
         "pbg":                   "Glucose (Post Prandial 2hr)",
-        # Inflammation
         "hscrp":                 "hsCRP",
         "hs-crp":                "hsCRP",
         "c reactive protein":    "C Reactive Protein",
@@ -692,21 +661,14 @@ def _build_alias_index() -> dict:
 
 
 def bm_lookup(test_name: str) -> dict:
-    """Return biomarker dict row as plain dict.
-    Falls back to: (1) alias index, (2) case-insensitive partial match."""
     if biomarker_dictionary.empty:
         return {}
-
-    # 1. Exact match
     if test_name in biomarker_dictionary.index:
         row = biomarker_dictionary.loc[test_name]
         if isinstance(row, pd.DataFrame):
             row = row.iloc[0]
         return row.to_dict()
-
     alias_idx = _build_alias_index()
-
-    # 2. Alias index (lower-stripped)
     key = test_name.lower().strip()
     canonical = alias_idx.get(key)
     if canonical and canonical in biomarker_dictionary.index:
@@ -714,8 +676,6 @@ def bm_lookup(test_name: str) -> dict:
         if isinstance(row, pd.DataFrame):
             row = row.iloc[0]
         return row.to_dict()
-
-    # 3. Partial / substring match (test_name contains canonical or vice versa)
     key_clean = key.replace("(", "").replace(")", "").replace(".", "").replace("-", " ")
     for canonical in biomarker_dictionary.index:
         c_clean = canonical.lower().replace("(", "").replace(")", "").replace(".", "").replace("-", " ")
@@ -724,8 +684,6 @@ def bm_lookup(test_name: str) -> dict:
             if isinstance(row, pd.DataFrame):
                 row = row.iloc[0]
             return row.to_dict()
-
-    # 4. Substring match (e.g. "Abs Eosinophil" found within "Absolute Eosinophil Count")
     for canonical in biomarker_dictionary.index:
         c_lower = canonical.lower()
         if key in c_lower or c_lower in key:
@@ -733,7 +691,6 @@ def bm_lookup(test_name: str) -> dict:
             if isinstance(row, pd.DataFrame):
                 row = row.iloc[0]
             return row.to_dict()
-
     return {}
 
 
@@ -742,7 +699,6 @@ def bm_lookup(test_name: str) -> dict:
 # ─────────────────────────────────────────────
 
 def clean_unit(u) -> str:
-    """Fix mangled µ character and strip NaN/None placeholders."""
     s = str(u).strip()
     if s in ("nan", "None", "NaN", ""):
         return ""
@@ -782,11 +738,9 @@ def status_pill(status: str) -> str:
     return f'<span style="background:{ACCENT}22;color:{ACCENT};font-weight:600;padding:2px 8px;border-radius:20px;font-size:0.78rem">{s or "Normal"}</span>'
 
 
-# Temp file registry — cleaned up when the process exits
 _tmp_files: list[str] = []
 
 def _make_tmp(data: bytes, suffix: str = ".pdf") -> Path:
-    """Write bytes to a named temp file, register for cleanup, return path."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
         f.write(data)
         path = f.name
@@ -804,7 +758,6 @@ atexit.register(_cleanup_tmp)
 
 
 def get_snapshot(history: pd.DataFrame) -> pd.DataFrame:
-    """Latest result per test — used in multiple places."""
     return (history.sort_values("report_date")
                    .groupby("test_name").last()
                    .reset_index())
@@ -839,17 +792,11 @@ def render_patient_card(history: pd.DataFrame):
 # ─────────────────────────────────────────────
 
 def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
-    """Polar scatter: each spoke = one biomarker, dot colour = status.
-    filter_status: 'all' | 'normal' | 'oor' | 'critical'
-    Zones: inner green=optimal, middle=normal, outer=high-risk (coral fill).
-    No centre count — removed per request.
-    """
     df = snapshot.copy()
     df["unit"] = df["unit"].apply(clean_unit)
     df["_ord"] = df["status"].apply(_status_sort)
     df = df.sort_values(["_ord", "test_name"]).reset_index(drop=True)
 
-    # Apply filter
     if filter_status == "critical":
         df = df[df["status"].str.contains("CRITICAL", na=False)]
     elif filter_status == "oor":
@@ -862,7 +809,6 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         st.info("No biomarkers match this filter.")
         return
 
-    # Compute radii: 0.35 = inner optimal zone, 0.65 = normal zone boundary, 0.9+ = high-risk
     radii = []
     for _, row in df.iterrows():
         bm = bm_lookup(row["test_name"])
@@ -873,16 +819,13 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         except (ValueError, TypeError):
             radii.append(0.5); continue
 
-        # For one-sided ranges like <100: treat boundary as the hi
         lo = o_lo if o_lo is not None else n_lo
         hi = o_hi if o_hi is not None else n_hi
 
         if hi is not None and lo is not None and hi > lo:
             mid = (lo + hi) / 2
-            # Map: mid → 0.5, lo boundary → 0.3, hi boundary → 0.7
             r = 0.5 + (val - mid) / (hi - lo) * 0.4
         elif hi is not None and hi > 0:
-            # <X style: 0 → 0, X → 0.6, 2X → 0.9
             r = (val / hi) * 0.6
         elif lo is not None and lo > 0:
             r = min(0.9, lo / max(val, 0.001) * 0.4 + 0.3)
@@ -913,32 +856,26 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
     ]
 
     fig = go.Figure()
-
-    # ── Coloured zone fills ──────────────────────────────────────────
     theta_full = list(range(0, 361, 3))
 
-    # Outer danger zone (coral, 0.72–1.0)
     fig.add_trace(go.Scatterpolar(
         r=[1.0]*len(theta_full), theta=theta_full,
         fill="toself", fillcolor="rgba(249,123,90,0.06)",
         line=dict(color="rgba(249,123,90,0.2)", width=1, dash="dot"),
         showlegend=False, hoverinfo="skip", mode="lines",
     ))
-    # Normal zone (blue, 0.35–0.72)
     fig.add_trace(go.Scatterpolar(
         r=[0.72]*len(theta_full), theta=theta_full,
         fill="toself", fillcolor="rgba(116,185,232,0.06)",
         line=dict(color=BORDER, width=1, dash="dot"),
         showlegend=False, hoverinfo="skip", mode="lines",
     ))
-    # Optimal inner zone (teal, 0–0.35)
     fig.add_trace(go.Scatterpolar(
         r=[0.35]*len(theta_full), theta=theta_full,
         fill="toself", fillcolor="rgba(78,205,196,0.10)",
         line=dict(color=ACCENT, width=1.2, dash="dash"),
         showlegend=False, hoverinfo="skip", mode="lines",
     ))
-    # Mid ring
     fig.add_trace(go.Scatterpolar(
         r=[0.55]*len(theta_full), theta=theta_full,
         fill="none",
@@ -946,7 +883,6 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         showlegend=False, hoverinfo="skip", mode="lines",
     ))
 
-    # ── Out-of-range spoke highlights ───────────────────────────────
     spread = 360 / n
     for i, (_, row) in enumerate(df.iterrows()):
         s = str(row["status"])
@@ -961,7 +897,6 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
                 showlegend=False, hoverinfo="skip",
             ))
 
-    # ── Data dots ───────────────────────────────────────────────────
     fig.add_trace(go.Scatterpolar(
         r=radii, theta=angles_deg,
         mode="markers",
@@ -971,9 +906,6 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
         showlegend=False,
     ))
 
-    # ── NO biomarker name labels — too cluttered. Hover tooltip provides names. ──
-
-    # ── Zone text labels (inside chart, right side) ──────────────────
     zone_annotations = [
         dict(text="Optimal", xref="paper", yref="paper", x=0.98, y=0.62,
              showarrow=False, font=dict(size=10, color=ACCENT, family="DM Sans"), xanchor="right"),
@@ -983,7 +915,6 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
              showarrow=False, font=dict(size=10, color=ORANGE, family="DM Sans"), xanchor="right"),
     ]
 
-    # Legend dots
     legend_items = [
         ("Optimal",      ACCENT),
         ("Normal",       BLUE),
@@ -1030,7 +961,7 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
 
 
 # ─────────────────────────────────────────────
-# RENDER: SUMMARY CARDS  (4-up + score bar)
+# RENDER: SUMMARY CARDS
 # ─────────────────────────────────────────────
 
 def render_summary_cards(snapshot: pd.DataFrame):
@@ -1038,7 +969,7 @@ def render_summary_cards(snapshot: pd.DataFrame):
     critical = snapshot["status"].str.contains("CRITICAL", na=False).sum()
     abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
     normal   = total - abnormal
-    oor      = abnormal - critical   # out-of-range but not critical
+    oor      = abnormal - critical
     pct_ok   = int(normal / total * 100) if total else 0
     bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
 
@@ -1087,7 +1018,6 @@ def render_results_table(snapshot: pd.DataFrame):
         try: return f"{float(v):.4g}"
         except: return str(v)
 
-    # Emoji prefix on status makes it scannable without colour (accessibility)
     def fmt_status(s):
         s = str(s) if pd.notna(s) else ""
         if "CRITICAL" in s: return f"🔴 {s}"
@@ -1134,7 +1064,6 @@ def render_trends_table(trends: pd.DataFrame):
         if "LOW"      in s: return f"🟡 {s}"
         return f"🟢 Normal" if not s or s in ("—", "nan") else f"🟢 {s}"
 
-    # Trend arrow with direction context
     def fmt_dir(row):
         t   = str(row.get("trend", ""))
         pct = row.get("change_%", 0)
@@ -1174,36 +1103,30 @@ def render_trends_table(trends: pd.DataFrame):
 
 
 # ─────────────────────────────────────────────
-# RENDER: PILL SLIDER  (biomarker range visualizer)
+# RENDER: PILL SLIDER
 # ─────────────────────────────────────────────
 
 def render_pill_slider(value: float, n_min, o_min, n_max, o_max, unit: str, status: str) -> str:
-    """Generate an HTML pill-track slider. Handles one-sided ranges (<X or >X)."""
-    # Use optimal if available, fall back to normal
     ref_lo = o_min if o_min is not None else n_min
     ref_hi = o_max if o_max is not None else n_max
-    # Optimal midpoint for label
     if o_min is not None and o_max is not None:
         optimal = (o_min + o_max) / 2
     elif o_max is not None:
-        optimal = o_max        # e.g. <100 — optimal IS the boundary
+        optimal = o_max
     elif o_min is not None:
         optimal = o_min
     else:
         optimal = None
 
-    # Need at least one boundary to draw
     if ref_lo is None and ref_hi is None:
         return ""
 
-    # Build span for track — include value + both boundaries with padding
     all_vals = [v for v in [value, ref_lo, ref_hi, n_min, n_max] if v is not None]
     if not all_vals:
         return ""
 
     span_lo = min(all_vals) * 0.7
     span_hi = max(all_vals) * 1.35
-    # Ensure value is visible even if very far out of range
     span_lo = min(span_lo, value * 0.7) if value > 0 else span_lo - abs(value) * 0.3
     span_hi = max(span_hi, value * 1.35) if value > 0 else span_hi + abs(value) * 0.3
     if span_lo == span_hi:
@@ -1213,7 +1136,6 @@ def render_pill_slider(value: float, n_min, o_min, n_max, o_max, unit: str, stat
     def pct(v):
         return max(3, min(95, (v - span_lo) / span * 100))
 
-    # Value dot color
     s = str(status)
     if   "CRITICAL" in s: dot_color = CRIT
     elif "HIGH"     in s: dot_color = ORANGE
@@ -1222,7 +1144,6 @@ def render_pill_slider(value: float, n_min, o_min, n_max, o_max, unit: str, stat
 
     val_pct = pct(value)
 
-    # Optimal zone strip inside track
     opt_html = ""
     if ref_lo is not None and ref_hi is not None:
         opt_l = pct(ref_lo); opt_r = pct(ref_hi)
@@ -1231,14 +1152,14 @@ def render_pill_slider(value: float, n_min, o_min, n_max, o_max, unit: str, stat
             f'height:100%;background:rgba(78,205,196,0.15);'
             f'border:1.5px dashed {ACCENT};border-radius:20px;box-sizing:border-box"></div>'
         )
-    elif ref_hi is not None:  # <X — shade left of boundary
+    elif ref_hi is not None:
         opt_r = pct(ref_hi)
         opt_html = (
             f'<div style="position:absolute;left:3%;width:{opt_r-3}%;'
             f'height:100%;background:rgba(78,205,196,0.12);'
             f'border:1.5px dashed {ACCENT};border-right:none;border-radius:20px 0 0 20px;box-sizing:border-box"></div>'
         )
-    elif ref_lo is not None:  # >X — shade right of boundary
+    elif ref_lo is not None:
         opt_l = pct(ref_lo)
         opt_html = (
             f'<div style="position:absolute;left:{opt_l}%;width:{95-opt_l}%;'
@@ -1246,7 +1167,6 @@ def render_pill_slider(value: float, n_min, o_min, n_max, o_max, unit: str, stat
             f'border:1.5px dashed {ACCENT};border-left:none;border-radius:0 20px 20px 0;box-sizing:border-box"></div>'
         )
 
-    # Optimal label below track
     opt_label_html = ""
     if optimal is not None:
         opt_pct = pct(optimal)
@@ -1283,17 +1203,14 @@ def render_pill_slider(value: float, n_min, o_min, n_max, o_max, unit: str, stat
 
 # ─────────────────────────────────────────────
 # RENDER: BIOMARKER DETAIL CARDS
-# (like Image 2 & 7 — pill slider per biomarker)
 # ─────────────────────────────────────────────
 
 def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None):
-    """Render individual biomarker cards with pill sliders — sorted by status severity."""
     df = snapshot.copy()
     df["_ord"] = df["status"].apply(_status_sort)
     df = df.sort_values(["_ord", "test_name"]).drop(columns=["_ord"])
     df["unit"] = df["unit"].apply(clean_unit)
 
-    # Get previous values if history provided
     prev_values = {}
     if history is not None and not history.empty:
         sorted_hist = history.sort_values("report_date")
@@ -1309,7 +1226,6 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
         except: return str(v)
 
     def _fmt_range(lo, hi) -> str:
-        """Format a range pair cleanly, handling one-sided ranges. Never shows nan."""
         if lo is not None and hi is not None:
             return f"{lo:.4g} – {hi:.4g}"
         elif hi is not None:
@@ -1319,12 +1235,11 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
         return "—"
 
     def _opt_target(o_min, o_max, n_min, n_max):
-        """Return a single optimal target value. Use midpoint if range, else boundary."""
         if o_min is not None and o_max is not None:
             return (o_min + o_max) / 2
-        elif o_max is not None:   # e.g. <100 → target IS the max
+        elif o_max is not None:
             return o_max
-        elif o_min is not None:   # e.g. >60 → target IS the min
+        elif o_min is not None:
             return o_min
         elif n_min is not None and n_max is not None:
             return (n_min + n_max) / 2
@@ -1348,40 +1263,33 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
         hr_min = bm.get("high_risk_min")
         hr_max = bm.get("high_risk_max")
 
-        # Status color
         s = status
         if   "CRITICAL" in s: val_color, bg_accent = CRIT,   "rgba(229,62,62,0.05)"
         elif "HIGH"     in s: val_color, bg_accent = ORANGE, "rgba(249,123,90,0.05)"
         elif "LOW"      in s: val_color, bg_accent = PURPLE, "rgba(192,132,252,0.05)"
         else:                  val_color, bg_accent = BLUE,   "rgba(116,185,232,0.04)"
 
-        # Pill slider
         try:
             fval = float(val)
             pill_html = render_pill_slider(fval, n_min, o_min, n_max, o_max, unit, status)
         except (ValueError, TypeError):
             pill_html = ""
 
-        # Range strings — prefer optimal, fall back to normal
         norm_str = _fmt_range(n_min, n_max)
         opt_target = _opt_target(o_min, o_max, n_min, n_max)
 
-        # To Optimal calculation
         if opt_target is not None:
             try:
                 fval2 = float(val)
                 diff = fval2 - opt_target
-                # For "< X" type ranges, being below is good (diff < 0 = good)
                 to_opt = f"{'+' if diff > 0 else ''}{diff:.3g}"
                 opt_label = f"Optimal: {opt_target:.4g}"
             except: to_opt = "—"; opt_label = ""
         else:
             to_opt = "—"; opt_label = ""
 
-        # High risk range string
         hr_str = _fmt_range(hr_min, hr_max) if (hr_min is not None or hr_max is not None) else "—"
 
-        # Previous value
         prev = prev_values.get(test)
         prev_str = fmt(prev) if prev is not None else "—"
 
@@ -1390,14 +1298,11 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
              border-radius:14px;padding:1.2rem 1.5rem 0.75rem;margin-bottom:0.75rem;
              background:linear-gradient(135deg,{bg_accent} 0%,{SURFACE} 50%);
              overflow:hidden;">
-          <!-- Top row: name + 4 data columns -->
           <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:nowrap">
-            <!-- Left: name -->
             <div style="min-width:140px;max-width:160px;flex-shrink:0">
               <div style="font-size:0.92rem;font-weight:700;color:{TEXT};line-height:1.3">⊕ {test}</div>
               <div style="font-size:0.72rem;color:{MUTED};margin-top:3px">{unit if unit else "—"}</div>
             </div>
-            <!-- Right: 4 columns in one row -->
             <div style="flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;min-width:0">
               <div>
                 <div style="font-size:0.62rem;color:{MUTED};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Current</div>
@@ -1422,7 +1327,6 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
               </div>
             </div>
           </div>
-          <!-- Pill slider — full width, constrained -->
           <div style="margin-top:0.5rem;overflow:hidden">
             {pill_html}
           </div>
@@ -1430,7 +1334,7 @@ def render_biomarker_cards(snapshot: pd.DataFrame, history: pd.DataFrame = None)
 
 
 # ─────────────────────────────────────────────
-# RENDER: TREND CHARTS  (new InoAge-style design)
+# RENDER: TREND CHARTS
 # ─────────────────────────────────────────────
 
 def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix: str = ""):
@@ -1479,17 +1383,14 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
 
         fig = go.Figure()
 
-        # ── Optimal zone (soft teal band) ──────────────────────────────
         if lo is not None and hi is not None:
             fig.add_hrect(y0=lo, y1=hi,
                           fillcolor="rgba(78,205,196,0.06)",
                           line=dict(color=ACCENT, width=1, dash="dot"),
                           layer="below")
-            # Red above
             fig.add_hrect(y0=hi, y1=axis_hi,
                           fillcolor="rgba(249,123,90,0.05)",
                           line_width=0, layer="below")
-            # Purple below
             fig.add_hrect(y0=axis_lo, y1=lo,
                           fillcolor="rgba(192,132,252,0.05)",
                           line_width=0, layer="below")
@@ -1502,8 +1403,6 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
             fig.add_hrect(y0=lo, y1=axis_hi, fillcolor="rgba(78,205,196,0.06)", line_width=0, layer="below")
             fig.add_hline(y=lo, line=dict(color=ACCENT, width=1, dash="dot"), layer="below")
 
-        # ── Gradient line connecting points ─────────────────────────────
-        # Draw colored line segments between consecutive points
         for i in range(len(ts) - 1):
             seg_color = point_colors[i]
             fig.add_trace(go.Scatter(
@@ -1515,7 +1414,6 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
                 hoverinfo="skip",
             ))
 
-        # ── Data points (hollow circles with colored fill like reference) ──
         fig.add_trace(go.Scatter(
             x=ts["report_date"],
             y=ts["value"],
@@ -1533,15 +1431,11 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
             name=test,
         ))
 
-        # ── Annotation labels at x-axis (like reference: "Mar 2023\n64/100") ──
-        # Date labels colored by status — added via x-axis ticktext workaround
-
         lo_s = f"{lo:.4g}" if lo is not None else "—"
         hi_s = f"{hi:.4g}" if hi is not None else "—"
         ann_text = (f"Target range: {lo_s} – {hi_s}{unit_label}"
                     if (lo is not None or hi is not None) else "")
 
-        # Optimal zone label at right
         annotations = []
         if hi is not None:
             annotations.append(dict(
@@ -1555,7 +1449,6 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
         if unit:
             title_text += f"  <span style='font-size:11px;color:{MUTED}'>({unit})</span>"
 
-        # Legend dots (Outside Target / Balanced / Optimized)
         fig.update_layout(
             title=dict(text=title_text, font=dict(color=TEXT, size=15, family="DM Sans"), x=0),
             paper_bgcolor=SURFACE,
@@ -1583,7 +1476,6 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
 
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
-        # Zone legend
         if lo is not None or hi is not None:
             st.markdown(f"""
             <div class="range-legend" style="margin-top:0.25rem;margin-bottom:0.5rem">
@@ -1609,42 +1501,33 @@ def render_trend_charts(history: pd.DataFrame, trends: pd.DataFrame, key_prefix:
 
 # ─────────────────────────────────────────────
 # RENDER: DUMBBELL CHANGE CHART
-# (like Image 3 — shows previous → current change)
 # ─────────────────────────────────────────────
 
 def render_change_chart(trends: pd.DataFrame, key_prefix: str = ""):
-    """Horizontal dumbbell plot: grey previous dot → colored current dot."""
     df = trends.dropna(subset=["first_value", "latest_value"]).copy()
     if df.empty:
         return
-
-    # Only tests with 2+ readings
     df = df[df["n_reports"] >= 2].copy()
     if df.empty:
         return
 
-    # Determine color per test based on latest status
     def row_color(r):
         s = str(r["latest_status"])
         pct = float(r["change_%"]) if pd.notna(r.get("change_%")) else 0
         if "CRITICAL" in s: return CRIT
         if "HIGH" in s:
-            return ORANGE if pct > 0 else ACCENT  # worsening HIGH = orange, improving = teal
+            return ORANGE if pct > 0 else ACCENT
         if "LOW" in s:
             return PURPLE if pct < 0 else ACCENT
         return ACCENT
 
     df["_color"] = df.apply(row_color, axis=1)
     df["_pct"]   = df["change_%"].apply(lambda x: float(x) if pd.notna(x) else 0)
-
-    # Sort by absolute change descending
     df = df.sort_values("_pct", key=abs, ascending=False).head(20)
 
     fig = go.Figure()
-
     y_labels = df["test_name"].tolist()
 
-    # Draw connecting lines
     for i, (_, r) in enumerate(df.iterrows()):
         fv = float(r["first_value"])
         lv = float(r["latest_value"])
@@ -1655,7 +1538,6 @@ def render_change_chart(trends: pd.DataFrame, key_prefix: str = ""):
             showlegend=False, hoverinfo="skip",
         ))
 
-    # Previous dots (grey hollow)
     fig.add_trace(go.Scatter(
         x=df["first_value"].astype(float),
         y=df["test_name"],
@@ -1665,7 +1547,6 @@ def render_change_chart(trends: pd.DataFrame, key_prefix: str = ""):
         hovertemplate="Previous: <b>%{x:.4g}</b><extra></extra>",
     ))
 
-    # Current dots (colored)
     fig.add_trace(go.Scatter(
         x=df["latest_value"].astype(float),
         y=df["test_name"],
@@ -1676,7 +1557,6 @@ def render_change_chart(trends: pd.DataFrame, key_prefix: str = ""):
         hovertemplate="Current: <b>%{x:.4g}</b><extra></extra>",
     ))
 
-    # Change labels
     for _, r in df.iterrows():
         pct = r["_pct"]
         lv  = float(r["latest_value"])
@@ -1752,7 +1632,6 @@ def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefi
                     unsafe_allow_html=True,
                 )
 
-    # ── Biomarker Change Dumbbell Chart ────────────────────────────────
     st.markdown(f"""
     <div style="margin-top:1.5rem;margin-bottom:0.25rem">
       <div style="font-size:1.1rem;font-weight:700;color:{TEXT}">Biomarker Change</div>
@@ -1786,7 +1665,7 @@ def render_trends_section(history: pd.DataFrame, trends: pd.DataFrame, key_prefi
 
 
 # ─────────────────────────────────────────────
-# API KEY  (cached per session)
+# API KEY
 # ─────────────────────────────────────────────
 
 @st.cache_data
@@ -2072,7 +1951,6 @@ elif page == "Patient Profiles":
                         else:
                             st.info("No change.")
 
-                # Reuse already-fetched patients list — avoids a second disk scan
                 other_patients = [(p["patient_id"], p["patient_name"])
                                   for p in patients if p["patient_id"] != selected_pid]
                 if other_patients:
@@ -2127,7 +2005,6 @@ elif page == "Patient Profiles":
             with tab1:
                 snapshot = get_snapshot(history)
 
-                # Compute stats
                 total    = len(snapshot)
                 critical = snapshot["status"].str.contains("CRITICAL", na=False).sum()
                 abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
@@ -2136,17 +2013,14 @@ elif page == "Patient Profiles":
                 pct_ok   = int(normal / total * 100) if total else 0
                 bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
 
-                # Session state for radial filter
                 filter_key = f"radial_filter_{selected_pid}"
                 if filter_key not in st.session_state:
                     st.session_state[filter_key] = "all"
                 active_filter = st.session_state[filter_key]
 
-                # Two-column layout
                 col_left, col_right = st.columns([1, 1.3])
 
                 with col_left:
-                    # Cards ARE the filter buttons — one st.button per card, styled as card
                     cards = [
                         ("all",      total,    TEXT,   "Total Tests"),
                         ("normal",   normal,   ACCENT, "Within Range"),
@@ -2159,7 +2033,6 @@ elif page == "Patient Profiles":
                         bg = f"rgba({','.join(str(int(color[i:i+2],16)) for i in (1,3,5))},0.08)" if is_active and color != TEXT else (LIGHT if is_active else SURFACE)
                         border = f"2px solid {color}" if is_active else f"1px solid {BORDER}"
                         with col_btn:
-                            # Render styled card as HTML, then invisible button underneath
                             st.markdown(f"""
                             <div style="background:{bg};border:{border};border-radius:14px;
                                  padding:1rem 0.5rem;text-align:center;cursor:pointer;
@@ -2176,7 +2049,6 @@ elif page == "Patient Profiles":
                                 st.session_state[filter_key] = fkey
                                 st.rerun()
 
-                    # Score bar
                     st.markdown(f"""
                     <div style="margin-top:0.75rem;margin-bottom:0.5rem">
                       <div style="display:flex;justify-content:space-between;margin-bottom:5px">
@@ -2206,7 +2078,6 @@ elif page == "Patient Profiles":
 
                 st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
 
-                # Toggle: cards vs table
                 view_mode = st.radio(
                     "View as",
                     ["Biomarker Cards", "Table"],
@@ -2219,18 +2090,13 @@ elif page == "Patient Profiles":
                 else:
                     render_results_table(snapshot)
 
+                # ── FIX: Only ONE download button here (duplicate was removed) ──
                 st.download_button(
                     "↓ Export Latest CSV",
                     data=snapshot.to_csv(index=False).encode("utf-8"),
                     file_name=f"{safe_name(history)}_latest.csv",
                     mime="text/csv",
-                )
-
-                st.download_button(
-                    "↓ Export Latest CSV",
-                    data=snapshot.to_csv(index=False).encode("utf-8"),
-                    file_name=f"{safe_name(history)}_latest.csv",
-                    mime="text/csv",
+                    key=f"pp_snap_{selected_pid}",
                 )
 
             with tab2:
@@ -2252,9 +2118,9 @@ elif page == "Patient Profiles":
                     data=history.to_csv(index=False).encode("utf-8"),
                     file_name=f"{safe_name(history)}_full_history.csv",
                     mime="text/csv",
+                    key=f"pp_hist_{selected_pid}",
                 )
 
-                # Manual value correction
                 st.markdown("---")
                 st.markdown(
                     '<div class="section-label">✏️ Manually Correct a Result</div>',
@@ -2474,7 +2340,6 @@ elif page == "LLM Review":
                         if st.button("✗ Reject All", key=f"rej_all_{pid}_{report_date}"):
                             rejected_tests = flagged["test_name"].tolist()
 
-                # Apply decisions
                 any_decision = (accepted_tests or rejected_tests or
                                 apply_date or reject_date or apply_name or reject_name)
 
@@ -2527,7 +2392,7 @@ elif page == "About":
     <div style="max-width:640px">
       <div class="section-label">About</div>
       <p style="color:{TEXT};line-height:1.85;font-size:0.88rem">
-        The <strong style="color:#fff">Longitudinal Biomarker Intelligence Platform</strong>
+        The <strong>Longitudinal Biomarker Intelligence Platform</strong>
         extracts structured data from PDF lab reports, flags out-of-range results,
         and tracks health trends across multiple reports over time.
       </p>
