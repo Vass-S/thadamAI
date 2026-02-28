@@ -289,7 +289,6 @@ def extract_metadata(text):
         meta["gender"] = m.group(3).upper()
 
     # ── Metropolis / new-Hitech fallback ─────────────────────────────
-    # Format: "Mr. SRINIWAS S" on its own line; "Age: 36 Year(s) Sex: Male" elsewhere
     if not meta["name"]:
         m = re.search(r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w]+(?:\s+\w)?)\s*(?:\n|$|Reference|VID)", text, re.I)
         if m:
@@ -334,20 +333,6 @@ def _clean_name(name: str) -> str:
 
 
 def make_patient_id(meta: dict) -> str:
-    """
-    Tier 1 — Full name (2+ real words) + gender.
-               Always deterministic; no profile scan needed.
-               e.g. 'SRINIWAS SRIRAM M' → stable hash.
-
-    Tier 2 — Truncated name (1 real word) + phone + gender.
-               Before hashing, scan existing profiles to see if a
-               Tier-1 record already exists for the same first-name
-               prefix + phone + gender.  If yes, reuse that PID so
-               both reports land in the same longitudinal profile.
-
-    Tier 3 — First name + gender + age-decade (no phone).
-               Same profile scan as Tier 2.
-    """
     gender = meta.get("gender", "").upper()
     name   = _clean_name(meta.get("name", ""))
     phone  = re.sub(r"\D", "", meta.get("phone", ""))[-10:]
@@ -355,12 +340,10 @@ def make_patient_id(meta: dict) -> str:
 
     real_words = [w for w in name.split() if len(w) >= 2]
 
-    # ── Tier 1: unambiguous full name ────────────────────────────────
     if len(real_words) >= 2:
         key = f"FULLNAME|{'_'.join(real_words)}|{gender}"
         return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
 
-    # ── Tiers 2 & 3: truncated name — try to merge with existing profile ──
     first = real_words[0] if real_words else "UNKNOWN"
     existing_pid = _lookup_existing_pid(first, gender, phone)
     if existing_pid:
@@ -376,16 +359,6 @@ def make_patient_id(meta: dict) -> str:
 
 
 def _lookup_existing_pid(first_name: str, gender: str, phone: str) -> str | None:
-    """
-    Scan stored patient profiles for one whose:
-      - stored patient_name starts with first_name (case-insensitive)
-      - stored gender matches
-      - stored phone (if present) matches last-10-digit phone
-
-    Returns the existing patient_id string, or None if no match found.
-    This lets a truncated "SRINIWAS S" report merge into the existing
-    "SRINIWAS SRIRAM" full-name profile automatically.
-    """
     if not STORE_DIR.exists():
         return None
     for csv_file in STORE_DIR.glob("*.csv"):
@@ -395,23 +368,13 @@ def _lookup_existing_pid(first_name: str, gender: str, phone: str) -> str | None
                 continue
             stored_name   = _clean_name(str(df["patient_name"].iloc[0]))
             stored_gender = str(df.get("gender", pd.Series([""])).iloc[0]).upper()
-            stored_phone  = ""
-            if "file_hash" in df.columns:
-                # Re-read without nrows to get phone if it was stored
-                pass
-            # Match: gender must agree, stored name must start with our first word,
-            # and if we have a phone it must match
             if stored_gender != gender:
                 continue
             stored_first = stored_name.split()[0] if stored_name.split() else ""
             if stored_first != first_name.upper():
                 continue
-            # Phone check — read source_file column to find phone if stored
-            # The phone isn't stored in the CSV directly; use the PID file name
-            # as identity — just matching first_name + gender is enough when
-            # the first name is distinctive (≥5 chars) to avoid false merges
             if len(first_name) >= 4:
-                return csv_file.stem   # return the patient_id (filename without .csv)
+                return csv_file.stem
         except Exception:
             continue
     return None
@@ -422,7 +385,6 @@ def _lookup_existing_pid(first_name: str, gender: str, phone: str) -> str | None
 # ─────────────────────────────────────────────
 
 def file_hash(path: Path) -> str:
-    """SHA-256 of file bytes — used to detect re-uploads of the same PDF."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -431,7 +393,6 @@ def file_hash(path: Path) -> str:
 
 
 def is_duplicate_file(path: Path) -> bool:
-    """Return True if this exact file has already been stored in any patient profile."""
     fh = file_hash(path)
     for csv_file in STORE_DIR.glob("*.csv"):
         try:
@@ -449,14 +410,12 @@ def is_duplicate_file(path: Path) -> bool:
 
 def find_value_in_text(text, pos):
     snippet = text[pos: pos + 100]
-    # Strip cid artifacts that pdfplumber emits for special chars
     snippet = re.sub(r'\(cid:\d+\)', '', snippet)
     m = re.search(
         r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)' + r'\s*' + _UNIT_RE,
         snippet, re.IGNORECASE
     )
     if not m:
-        # Try without unit — value only
         m = re.search(r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)', snippet, re.IGNORECASE)
         if not m:
             return None
@@ -497,7 +456,6 @@ def extract_biomarkers(text, gender=""):
 
             found = find_value_in_text(clean, match.end())
 
-            # Look up to 2 lines ahead for value or split unit
             if not found:
                 for lookahead in range(1, 3):
                     if i + lookahead < len(lines):
@@ -508,7 +466,6 @@ def extract_biomarkers(text, gender=""):
                         if found:
                             break
 
-            # Unit on a standalone line below the value (e.g. Hitech DHEA SULPHATE)
             if found and not found[1]:
                 for lookahead in range(1, 3):
                     if i + lookahead < len(lines):
@@ -541,18 +498,11 @@ def extract_biomarkers(text, gender=""):
 # PROCESSING & STORAGE
 # ─────────────────────────────────────────────
 
-def compute_current_age(age_at_test: int, report_date: str) -> int:
+def process_pdf(pdf_path, verbose=False):
     """
-    Derive approximate birth year from age-at-test + report date,
-    then return how old the patient is today (Feb 2026).
+    Extract biomarkers + metadata from a PDF lab report.
+    Returns (DataFrame, raw_text). DataFrame is empty if extraction fails.
     """
-    try:
-        report_year = int(str(report_date)[:4])
-        birth_year  = report_year - age_at_test
-        current_year = datetime.now().year
-        return current_year - birth_year
-    except Exception:
-        return age_at_test
     pdf_path = Path(pdf_path)
     with pdfplumber.open(pdf_path) as pdf:
         text = ""
@@ -568,25 +518,26 @@ def compute_current_age(age_at_test: int, report_date: str) -> int:
         print(f"  {pdf_path.name}: {len(results)} tests | {meta.get('name','?')} | {meta.get('date','?')}")
 
     if not results:
-        return pd.DataFrame()
+        return pd.DataFrame(), text
 
     df = pd.DataFrame(results)
-    df["patient_id"]    = pid
-    df["patient_name"]  = meta["name"]
-    df["gender"]        = meta.get("gender", "")
-    df["age_at_test"]   = meta.get("age", "")
-    df["report_date"]   = meta["date"]
-    df["source_file"]   = pdf_path.name
-    df["file_hash"]     = file_hash(pdf_path)
-    # Compute birth year so current age stays accurate across future uploads
+    df["patient_id"]   = pid
+    df["patient_name"] = meta["name"]
+    df["gender"]       = meta.get("gender", "")
+    df["age_at_test"]  = meta.get("age", "")
+    df["report_date"]  = meta["date"]
+    df["source_file"]  = pdf_path.name
+    df["file_hash"]    = file_hash(pdf_path)
+
     if meta.get("age") and meta.get("date"):
         df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
     else:
         df["birth_year"] = None
-    return df
+
+    return df, text
 
 
-def save_report(df):
+def save_report(df: pd.DataFrame) -> None:
     if df.empty:
         return
     path = STORE_DIR / f"{df['patient_id'].iloc[0]}.csv"
@@ -601,17 +552,16 @@ def save_report(df):
     df.sort_values(["test_name", "report_date"]).to_csv(path, index=False)
 
 
-def load_history(patient_id):
+def load_history(patient_id: str) -> pd.DataFrame:
     path = STORE_DIR / f"{patient_id}.csv"
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_csv(path)
     df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
-    # Compute current age from the earliest known birth_year
     if "birth_year" in df.columns:
         birth_years = pd.to_numeric(df["birth_year"], errors="coerce").dropna()
         if not birth_years.empty:
-            birth_year = int(birth_years.min())  # most accurate = earliest report's estimate
+            birth_year = int(birth_years.min())
             df["current_age"] = datetime.now().year - birth_year
         else:
             df["current_age"] = df.get("age_at_test", None)
@@ -625,7 +575,6 @@ def load_history(patient_id):
 # ─────────────────────────────────────────────
 
 def delete_patient(patient_id: str) -> bool:
-    """Delete all stored data for a patient. Returns True on success."""
     path = STORE_DIR / f"{patient_id}.csv"
     if path.exists():
         path.unlink()
@@ -634,7 +583,6 @@ def delete_patient(patient_id: str) -> bool:
 
 
 def delete_report_by_date(patient_id: str, report_date: str) -> bool:
-    """Remove all rows for a specific report_date from a patient's profile."""
     path = STORE_DIR / f"{patient_id}.csv"
     if not path.exists():
         return False
@@ -651,10 +599,79 @@ def delete_report_by_date(patient_id: str, report_date: str) -> bool:
 
 
 # ─────────────────────────────────────────────
+# PATIENT MANAGEMENT
+# ─────────────────────────────────────────────
+
+def rename_patient(patient_id: str, new_name: str) -> bool:
+    """Rename all rows for a patient to new_name (stored as UPPER). Returns True on success."""
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return False
+    df = pd.read_csv(path)
+    df["patient_name"] = new_name.strip().upper()
+    df.to_csv(path, index=False)
+    return True
+
+
+def merge_into_patient(source_id: str, target_id: str) -> bool:
+    """
+    Merge all reports from source_id into target_id, then delete source_id.
+    Duplicate (test_name, report_date) rows are dropped (target wins).
+    Returns True on success.
+    """
+    src_path = STORE_DIR / f"{source_id}.csv"
+    tgt_path = STORE_DIR / f"{target_id}.csv"
+    if not src_path.exists() or not tgt_path.exists():
+        return False
+    try:
+        src = pd.read_csv(src_path)
+        tgt = pd.read_csv(tgt_path)
+        # Rewrite source rows to carry the target patient identity
+        src["patient_id"]   = target_id
+        src["patient_name"] = tgt["patient_name"].iloc[0]
+        merged = pd.concat([tgt, src], ignore_index=True)
+        merged.drop_duplicates(subset=["test_name", "report_date"], keep="first", inplace=True)
+        merged.sort_values(["test_name", "report_date"]).to_csv(tgt_path, index=False)
+        src_path.unlink()
+        return True
+    except Exception:
+        return False
+
+
+def patch_record(patient_id: str, report_date: str, test_name: str,
+                 new_value: float, new_unit: str = "") -> bool:
+    """
+    Overwrite the value (and optionally unit) for one specific
+    (patient, report_date, test_name) record, then recompute status.
+    Returns True if a matching row was found and updated.
+    """
+    path = STORE_DIR / f"{patient_id}.csv"
+    if not path.exists():
+        return False
+    df = pd.read_csv(path)
+    mask = (
+        (df["report_date"].astype(str).str[:10] == str(report_date)[:10]) &
+        (df["test_name"] == test_name)
+    )
+    if not mask.any():
+        return False
+    df.loc[mask, "value"] = new_value
+    if new_unit:
+        df.loc[mask, "unit"] = new_unit
+    # Recompute status for the patched row
+    for idx in df[mask].index:
+        gender = str(df.at[idx, "gender"]) if "gender" in df.columns else ""
+        unit   = str(df.at[idx, "unit"])
+        df.at[idx, "status"] = flag_status(test_name, new_value, unit, gender)
+    df.to_csv(path, index=False)
+    return True
+
+
+# ─────────────────────────────────────────────
 # TRENDS & TIMESERIES
 # ─────────────────────────────────────────────
 
-def generate_trends(history):
+def generate_trends(history: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for test, group in history.groupby("test_name"):
         group = (group.dropna(subset=["report_date"])
@@ -685,7 +702,6 @@ def generate_trends(history):
 
 
 def get_test_timeseries(history: pd.DataFrame, test_name: str) -> pd.DataFrame:
-    """Return date-sorted (report_date, value, status, unit) rows for one test."""
     df = (history[history["test_name"] == test_name]
           .dropna(subset=["report_date"])
           .sort_values("report_date")
