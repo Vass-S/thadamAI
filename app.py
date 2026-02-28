@@ -380,43 +380,51 @@ button[data-testid*="flt_"] {{
   font-size: 0 !important;
   cursor: pointer !important;
 }}
-/* Hide branding/deploy clutter but KEEP the sidebar toggle button visible.
-   .stAppToolbar contains the collapse arrow — never display:none the whole thing. */
-#MainMenu {{ visibility: hidden; }}
-footer {{ visibility: hidden; }}
-.stDeployButton {{ display: none !important; }}
-[data-testid="stDecoration"] {{ display: none !important; }}
-[data-testid="stStatusWidget"] {{ display: none !important; }}
+/* ── Hide ALL Streamlit chrome cleanly ── */
+#MainMenu, footer, .stDeployButton {{ display: none !important; }}
+[data-testid="stHeader"],
+header[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+[data-testid="stToolbarActions"],
+.stAppToolbar {{ display: none !important; }}
 
-/* Hide the top header bar (gradient bar at very top) but not the toolbar row */
-[data-testid="stHeader"] {{ background: none !important; }}
-header[data-testid="stHeader"] {{ background: none !important; height: 0 !important; min-height: 0 !important; }}
-
-/* Keep the app toolbar visible (it holds the sidebar toggle), but strip its background */
-.stAppToolbar {{
-  background: transparent !important;
-  box-shadow: none !important;
-}}
-[data-testid="stToolbar"] {{
-  background: transparent !important;
-  box-shadow: none !important;
-}}
-
-/* Hide only the inner toolbar items we don't want (viewer badge, share button) */
-[data-testid="stToolbarActions"] {{ display: none !important; }}
-
-/* Make sure the sidebar collapse/expand button is always visible and clickable */
+/* Hide Streamlit's own sidebar toggle — our custom JS arrow replaces it */
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="stSidebarNavToggle"],
 button[aria-label="Collapse sidebar"],
 button[aria-label="Expand sidebar"],
-button[aria-label="Open sidebar"],
-button[kind="header"] {{
-  display: flex !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
-  z-index: 999999 !important;
+button[aria-label="Open sidebar"] {{ display: none !important; }}
+
+/* ── Custom floating sidebar arrow tab ── */
+#bip-sidebar-toggle {{
+  position: fixed;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  z-index: 999999;
+  width: 20px;
+  height: 56px;
+  background: {SURFACE};
+  border: 1px solid {BORDER};
+  border-left: none;
+  border-radius: 0 10px 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 3px 0 12px rgba(0,0,0,0.08);
+  transition: all 0.2s ease;
+  font-size: 13px;
+  color: {MUTED};
+  user-select: none;
+}}
+#bip-sidebar-toggle:hover {{
+  background: {LIGHT};
+  color: {ACCENT};
+  width: 24px;
+  box-shadow: 3px 0 16px rgba(78,205,196,0.22);
 }}
 
 /* Load Material Symbols Rounded so icon text never shows as raw ligature */
