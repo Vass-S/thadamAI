@@ -1085,40 +1085,25 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
             f'border-radius:50%;background:{c};flex-shrink:0;"></span>'
         )
 
-    # Legend
-    legend_html = '<div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0;">'
-    for z in ["Optimal", "Normal", "High Risk", "Diseased"]:
+
+    # ── Legend matching reference image (Out of Range / Normal / Good / Optimal) ─
+    legend_html = '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">'
+    for _z, _col, _lbl in [
+        ("Diseased",  "#ef6b6b", "Out of Range"),
+        ("High Risk", "#f59b5e", "Normal"),
+        ("Normal",    "#a78bdc", "Good"),
+        ("Optimal",   "#52c49a", "Optimal"),
+    ]:
         legend_html += (
-            f'<span style="display:flex;align-items:center;gap:7px;">'
-            f'{zone_dot(z)}'
-            f'<span style="font-size:11.5px;color:#6b7280;font-weight:400;">{z}</span>'
-            f'</span>'
+            '<span style="display:flex;align-items:center;gap:7px;">'
+            f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+            f'background:{_col};flex-shrink:0;"></span>'
+            f'<span style="font-size:11.5px;color:#6b7280;">{_lbl}</span>'
+            '</span>'
         )
     legend_html += '</div>'
 
-    # Filter pill buttons (visual only — actual filter is the selectbox above)
-    pills_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px;">'
-    for opt in zone_options:
-        sel    = opt == active_zone
-        c      = ZONE_C.get(opt, "#374151")
-        bg     = ZONE_BG.get(opt, "rgba(55,65,81,0.08)") if sel else "#f9fafb"
-        border = ZONE_BORDER.get(opt, "#e5e7eb") if sel else "#e5e7eb"
-        fw     = "600" if sel else "400"
-        tc     = c if sel else "#6b7280"
-        count  = len(df) if opt == "All" else len(df[df["_zone"] == opt])
-        pills_html += (
-            f'<span style="padding:5px 16px;border-radius:20px;'
-            f'border:1.5px solid {border};background:{bg};color:{tc};'
-            f'font-weight:{fw};font-size:12.5px;display:inline-flex;'
-            f'align-items:center;gap:6px;cursor:default;">'
-            f'{opt}'
-            f'<span style="font-size:10.5px;background:{"white" if sel else "#f0f0f4"};'
-            f'color:#9ca3af;padding:0 5px;border-radius:8px;">{count}</span>'
-            f'</span>'
-        )
-    pills_html += '</div>'
-
-    # Table rows
+    # ── Table rows ────────────────────────────────────────────────────────────
     rows_html = ""
     for _, row in view_df.iterrows():
         z    = row["_zone"]
@@ -1126,114 +1111,102 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
         unit = _html_mod.escape(str(row["unit"]))
         rng  = _html_mod.escape(str(row["_range"]))
         pan  = _html_mod.escape(str(row["_panel"]))
-        # Left border accent per zone
         zc   = ZONE_C.get(z, "#52c49a")
-        rows_html += f"""
-<tr style="border-bottom:1px solid #f3f4f6;transition:background 0.12s;"
-    onmouseover="this.style.background='#fafafa'"
-    onmouseout="this.style.background='transparent'">
-  <td style="padding:15px 16px 15px 0;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <span style="width:3px;height:34px;border-radius:2px;
-                   background:{zc};opacity:0.7;display:inline-block;flex-shrink:0;"></span>
-      <div>
-        <div style="font-size:13.5px;font-weight:500;color:#111827;
-                    line-height:1.35;">{name}</div>
-        <div style="font-size:11px;color:#9ca3af;margin-top:2px;">{unit}</div>
-      </div>
-    </div>
-  </td>
-  <td style="padding:15px 20px;text-align:center;vertical-align:middle;">
-    {pill(row['_val_str'], z)}
-  </td>
-  <td style="padding:15px 16px;font-size:13px;color:#9ca3af;
-             white-space:nowrap;vertical-align:middle;">{rng}</td>
-  <td style="padding:15px 0 15px 16px;font-size:13px;color:#6b7280;
-             vertical-align:middle;">{pan}</td>
-</tr>"""
+        v_pill = pill(row['_val_str'], z)
+        rows_html += (
+            '<tr style="border-bottom:1px solid #f3f4f6;"'
+            ' onmouseover="this.style.background=\'#fafafa\'"'
+            ' onmouseout="this.style.background=\'transparent\'">'
+            f'<td style="padding:13px 12px 13px 0;">'
+            f'<div style="display:flex;align-items:center;gap:9px;">'
+            f'<span style="width:3px;height:30px;border-radius:2px;background:{zc};'
+            f'opacity:0.75;display:inline-block;flex-shrink:0;"></span>'
+            f'<div>'
+            f'<div style="font-size:13.5px;font-weight:500;color:#111827;line-height:1.3;">'
+            f'<span style="color:#94a3b8;margin-right:4px;font-size:11px;">&#8853;</span>{name}</div>'
+            f'<div style="font-size:11px;color:#9ca3af;margin-top:2px;">{unit}</div>'
+            f'</div></div></td>'
+            f'<td style="padding:13px 16px;text-align:center;vertical-align:middle;">{v_pill}</td>'
+            f'<td style="padding:13px 12px;font-size:13px;color:#94a3b8;white-space:nowrap;vertical-align:middle;">{rng}</td>'
+            f'<td style="padding:13px 0 13px 12px;font-size:13px;color:#6b7280;vertical-align:middle;">{pan}</td>'
+            '</tr>'
+        )
 
     empty_row = (
         '<tr><td colspan="4" style="padding:40px;text-align:center;'
         'color:#9ca3af;font-size:13px;">No biomarkers in this category.</td></tr>'
     )
 
-    card_html = f"""
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-  .fv-wrap * {{ box-sizing:border-box; }}
-</style>
-<div class="fv-wrap" style="
-  background:#ffffff;
-  border-radius:18px;
-  border:1px solid #f0f1f3;
-  box-shadow:0 4px 24px rgba(0,0,0,0.06);
-  padding:28px 28px 10px 28px;
-  font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
-  color:#111827;
-">
+    # ── Dropdown — styled to match reference image (active filter highlighted) ──
+    dd_col    = ZONE_C.get(active_zone, "#374151") if active_zone != "All" else "#374151"
+    dd_bg     = ZONE_BG.get(active_zone, "#f8fafc") if active_zone != "All" else "#f8fafc"
+    dd_border = ZONE_BORDER.get(active_zone, "#e2e8f0") if active_zone != "All" else "#e2e8f0"
+    dropdown_html = (
+        f'<div style="display:inline-flex;align-items:center;gap:8px;'
+        f'padding:9px 14px 9px 14px;border-radius:10px;'
+        f'border:1.5px solid {dd_border};background:{dd_bg};'
+        f'box-shadow:0 1px 4px rgba(0,0,0,0.06);min-width:148px;'
+        f'justify-content:space-between;">'
+        f'<span style="font-size:13.5px;font-weight:500;color:{dd_col};">{active_zone}</span>'
+        f'<svg width="13" height="13" viewBox="0 0 20 20" fill="none">'
+        f'<path d="M5 7.5l5 5 5-5" stroke="#94a3b8" stroke-width="2"'
+        f' stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        f'</div>'
+    )
 
-  <!-- ── Header ── -->
-  <div style="margin-bottom:6px;">
-    <div style="font-size:23px;font-weight:700;letter-spacing:-0.6px;color:#0f172a;">
-      Focus View
-    </div>
-    <div style="font-size:14.5px;color:#9ca3af;margin-top:5px;font-weight:400;
-                line-height:1.4;">
-      Your essential insights:&nbsp;
-      <span style="color:{insight_color};font-weight:600;">{insight_z}</span>
-    </div>
-  </div>
+    # ── Assemble card HTML (rendered inside st.components iframe) ─────────────
+    card_html = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">'
+        '<style>'
+        '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}'
+        'body{font-family:\'Inter\',-apple-system,sans-serif;color:#111827;background:transparent;}'
+        'table{border-collapse:collapse;width:100%;}'
+        '</style></head><body>'
 
-  <!-- ── Divider ── -->
-  <div style="border-top:1px solid #f0f1f3;margin:18px 0;"></div>
+        # Header
+        '<div style="margin-bottom:5px;">'
+        '<div style="font-size:22px;font-weight:700;letter-spacing:-0.5px;color:#0f172a;line-height:1.2;">InoRange - Focus View</div>'
+        f'<div style="font-size:13.5px;color:#94a3b8;margin-top:5px;font-weight:400;">'
+        f'Your essential insights:&nbsp;<span style="color:{insight_color};font-weight:600;">{insight_z}</span>'
+        f'</div></div>'
 
-  <!-- ── Description + Legend ── -->
-  <div style="display:flex;justify-content:space-between;
-              align-items:flex-start;gap:24px;margin-bottom:22px;">
-    <div style="font-size:13px;color:#6b7280;line-height:1.65;max-width:400px;">
-      Some biomarker data may require special attention.<br>
-      Use the filter above to explore subcategories to quickly
-      obtain essential insights.
-    </div>
-    {legend_html}
-  </div>
+        # Divider
+        '<div style="border-top:1px solid #f1f5f9;margin:16px 0;"></div>'
 
-  <!-- ── Filter pills (visual only — selectbox above is the driver) ── -->
-  {pills_html}
+        # Description + legend
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:20px;">'
+        '<div style="font-size:13px;color:#6b7280;line-height:1.7;max-width:340px;">'
+        'Some biomarker data may require special attention. '
+        'Use the focus view to explore subcategories to quickly obtain essential insights.'
+        '</div>'
+        + legend_html +
+        '</div>'
 
-  <!-- ── Table ── -->
-  <table style="width:100%;border-collapse:collapse;">
-    <thead>
-      <tr style="border-bottom:1.5px solid #e5e7eb;">
-        <th style="padding:9px 16px 11px 0;text-align:left;font-size:11px;
-                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
-                   text-transform:uppercase;">Biomarker</th>
-        <th style="padding:9px 20px 11px;text-align:center;font-size:11px;
-                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
-                   text-transform:uppercase;">Current Value</th>
-        <th style="padding:9px 16px 11px;text-align:left;font-size:11px;
-                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
-                   text-transform:uppercase;">Range</th>
-        <th style="padding:9px 0 11px 16px;text-align:left;font-size:11px;
-                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
-                   text-transform:uppercase;">Biomarker Panel</th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows_html or empty_row}
-    </tbody>
-  </table>
+        # Dropdown (visual indicator — functional selectbox is above this iframe)
+        + dropdown_html +
 
-  <!-- ── Footer count ── -->
-  <div style="padding:14px 0 4px;font-size:11.5px;color:#d1d5db;
-              text-align:right;font-weight:400;">
-    {n_shown}&nbsp;biomarker{"s" if n_shown != 1 else ""}&nbsp;shown
-  </div>
-</div>
-"""
-    # Height: header ~200px + per-row ~58px + footer ~60px
-    estimated_height = 290 + n_shown * 58
+        # Table
+        '<table style="margin-top:18px;">'
+        '<thead><tr style="border-bottom:1.5px solid #e2e8f0;">'
+        '<th style="padding:8px 12px 10px 0;text-align:left;font-size:10px;font-weight:500;color:#94a3b8;letter-spacing:0.8px;text-transform:uppercase;">Biomarker</th>'
+        '<th style="padding:8px 16px 10px;text-align:center;font-size:10px;font-weight:500;color:#94a3b8;letter-spacing:0.8px;text-transform:uppercase;">Current Value</th>'
+        '<th style="padding:8px 12px 10px;text-align:left;font-size:10px;font-weight:500;color:#94a3b8;letter-spacing:0.8px;text-transform:uppercase;">Ino Range</th>'
+        '<th style="padding:8px 0 10px 12px;text-align:left;font-size:10px;font-weight:500;color:#94a3b8;letter-spacing:0.8px;text-transform:uppercase;">Biomarker Panel</th>'
+        '</tr></thead>'
+        '<tbody>' + (rows_html or empty_row) + '</tbody>'
+        '</table>'
+
+        # Footer
+        f'<div style="padding:12px 0 2px;font-size:11px;color:#cbd5e1;text-align:right;">'
+        f'{n_shown}&nbsp;biomarker{"s" if n_shown != 1 else ""}&nbsp;shown'
+        f'</div>'
+
+        '</body></html>'
+    )
+    estimated_height = 300 + n_shown * 58
     st.components.v1.html(card_html, height=estimated_height, scrolling=False)
+
 
 
 # ─────────────────────────────────────────────
@@ -2159,33 +2132,109 @@ elif page == "Patient Profiles":
             with tab1:
                 snapshot = get_snapshot(history)
 
-                # Summary stats
+                # ── Overview stats ──────────────────────────────────────────
                 total    = len(snapshot)
                 critical = snapshot["status"].str.contains("CRITICAL", na=False).sum()
                 abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
                 normal   = total - abnormal
+                oor      = abnormal - critical
                 pct_ok   = int(normal / total * 100) if total else 0
                 bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
 
-                render_summary_cards(snapshot)
-
+                # ── Page heading ─────────────────────────────────────────────
                 st.markdown(f"""
-                <div style="margin-bottom:1rem">
-                  <div style="display:flex;justify-content:space-between;margin-bottom:5px">
-                    <span style="font-size:0.75rem;color:{MUTED}">Within-Range Score</span>
-                    <span style="font-size:0.8rem;font-weight:700;color:{bar_col}">{pct_ok}%</span>
-                  </div>
-                  <div style="background:{BORDER};border-radius:8px;height:6px">
-                    <div style="width:{pct_ok}%;height:100%;background:{bar_col};
-                           border-radius:8px;transition:width 0.6s ease"></div>
-                  </div>
+                <style>
+                  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap');
+                  .ov-page {{
+                    font-family: 'DM Sans', -apple-system, sans-serif;
+                    padding: 4px 0 20px;
+                  }}
+                  .ov-heading {{
+                    font-size: 30px; font-weight: 700; color: #0f172a;
+                    letter-spacing: -0.8px; margin-bottom: 4px; line-height: 1.15;
+                  }}
+                  .ov-sub {{
+                    font-size: 14px; color: #94a3b8; font-weight: 400; margin-bottom: 0;
+                  }}
+                </style>
+                <div class="ov-page">
+                  <div class="ov-heading">Overview</div>
+                  <div class="ov-sub">Biomarker health summary &nbsp;·&nbsp; {total} tests tracked</div>
                 </div>""", unsafe_allow_html=True)
 
-                render_radial_overview(snapshot, filter_status="all")
+                # ── Two-column card layout ────────────────────────────────────
+                col_l, col_r = st.columns([1, 1.08], gap="large")
 
-                st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
+                with col_l:
+                    # ── Left card: Results Summary ────────────────────────────
+                    st.markdown(f"""
+                    <div style="background:#ffffff;border-radius:20px;
+                         border:1px solid #f1f5f9;
+                         box-shadow:0 2px 20px rgba(15,23,42,0.06);
+                         padding:28px 28px 0 28px;
+                         font-family:'DM Sans',-apple-system,sans-serif;">
 
-                render_results_table(snapshot, table_key=f"profile_{selected_pid}")
+                      <div style="font-size:20px;font-weight:700;color:#0f172a;
+                                  letter-spacing:-0.4px;line-height:1.2;margin-bottom:4px;">
+                        InoRange - Summary
+                      </div>
+                      <div style="font-size:13px;color:#94a3b8;margin-bottom:20px;">
+                        Your biomarker results at a glance
+                      </div>
+
+                      <div style="border-top:1px solid #f1f5f9;margin-bottom:20px;"></div>
+
+                      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
+                        <div style="background:#f8fafc;border-radius:12px;padding:14px 10px;text-align:center;">
+                          <div style="font-size:22px;font-weight:700;color:#0f172a;line-height:1;">{total}</div>
+                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Total</div>
+                        </div>
+                        <div style="background:#f0fdf9;border-radius:12px;padding:14px 10px;text-align:center;">
+                          <div style="font-size:22px;font-weight:700;color:#52c49a;line-height:1;">{normal}</div>
+                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Optimal</div>
+                        </div>
+                        <div style="background:#fff7ed;border-radius:12px;padding:14px 10px;text-align:center;">
+                          <div style="font-size:22px;font-weight:700;color:#f59b5e;line-height:1;">{oor}</div>
+                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Attention</div>
+                        </div>
+                        <div style="background:#fff1f2;border-radius:12px;padding:14px 10px;text-align:center;">
+                          <div style="font-size:22px;font-weight:700;color:#ef6b6b;line-height:1;">{critical}</div>
+                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Critical</div>
+                        </div>
+                      </div>
+
+                      <div style="margin-bottom:22px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                          <span style="font-size:12px;color:#94a3b8;font-weight:500;">Within-range score</span>
+                          <span style="font-size:12px;font-weight:700;color:{bar_col};">{pct_ok}%</span>
+                        </div>
+                        <div style="background:#f1f5f9;border-radius:6px;height:5px;">
+                          <div style="width:{pct_ok}%;height:100%;background:{bar_col};border-radius:6px;transition:width 0.6s ease;"></div>
+                        </div>
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+
+                    # Radial chart sits below the stat block, inside the same visual card
+                    st.markdown("""
+                    <div style="background:#ffffff;border-radius:0 0 20px 20px;
+                         border:1px solid #f1f5f9;border-top:none;
+                         box-shadow:0 2px 20px rgba(15,23,42,0.06);
+                         padding:0 12px 24px;margin-top:-2px;">
+                    """, unsafe_allow_html=True)
+                    render_radial_overview(snapshot, filter_status="all")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with col_r:
+                    # ── Right card: Focus View ────────────────────────────────
+                    st.markdown("""
+                    <div style="background:#ffffff;border-radius:20px;
+                         border:1px solid #f1f5f9;
+                         box-shadow:0 2px 20px rgba(15,23,42,0.06);
+                         padding:28px 24px 16px;
+                         font-family:'DM Sans',-apple-system,sans-serif;">
+                    """, unsafe_allow_html=True)
+                    render_results_table(snapshot, table_key=f"profile_{selected_pid}")
+                    st.markdown("</div>", unsafe_allow_html=True)
 
                 st.download_button(
                     "↓ Export Latest CSV",
