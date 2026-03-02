@@ -751,12 +751,28 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
                  f'fill="none" stroke="rgba(150,150,170,0.22)" '
                  f'stroke-width="0.9" stroke-dasharray="4,5"/>')
 
-    # Quadrant divider spokes (at 45°, 135°, 225°, 315°)
+    # Quadrant divider spokes (at 45°, 135°, 225°, 315°) — slightly darker
     for angle in [45, 135, 225, 315]:
         x1, y1 = to_xy(angle, R_INNER - 10)
         x2, y2 = to_xy(angle, R_OUTER + 20)
         P.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-                 f'stroke="rgba(140,140,160,0.45)" stroke-width="0.9"/>')
+                 f'stroke="rgba(110,110,135,0.55)" stroke-width="1.1"/>')
+
+    # Data spokes — thin solid lines from centre through every dot's angle
+    # Slightly darker than the dashed concentric rings for structural emphasis
+    spoke_angles = set()
+    for z, dots in all_dots.items():
+        for d in dots:
+            dx, dy = d["x"] - CX, d["y"] - CY
+            angle  = math.degrees(math.atan2(dy, dx))
+            angle  = round(angle * 2) / 2   # deduplicate near-identical spokes
+            spoke_angles.add(angle)
+
+    for angle in spoke_angles:
+        x1, y1 = to_xy(angle, 0)
+        x2, y2 = to_xy(angle, R_OUTER + 18)
+        P.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
+                 f'stroke="rgba(120,120,145,0.18)" stroke-width="0.75"/>')
 
     # Coloured outer arc accent per zone
     for z, (a0, a1) in ARCS.items():
@@ -775,56 +791,53 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
                 f'</circle>'
             )
 
-    # ── Zone labels — placed OUTSIDE the grey circle, never clipped ─────────
-    # bisector angle tells us which edge; we position text just beyond R_GREY
+    # ── Zone labels — curved uppercase text outside grey circle ──────────────
+    # Each label follows its arc; we use textPath on a circular arc path for
+    # top/bottom zones and straight text with rotation for left/right.
     for z, meta in ZONE_META.items():
-        bis   = meta["bisector"]   # 0=right, 90=bottom, 180=left, 270=top
-        label = meta["label"]
+        bis   = meta["bisector"]
+        label = meta["label"].upper()
         col   = C[z]
-
-        # Push label far enough past the grey circle edge
-        r_lbl = R_GREY + 22
-
-        # For two-word labels (High Risk) we use a tspan to split onto 2 lines
-        # at left/right edges where vertical space is tight
+        r_lbl = R_GREY + 26
         lx, ly = to_xy(bis, r_lbl)
 
-        # Text anchor: left side → end, right side → start, top/bottom → middle
-        if   bis == 0:   anchor, dy_off = "start",  0
-        elif bis == 90:  anchor, dy_off = "middle",  0
-        elif bis == 180: anchor, dy_off = "end",     0
-        else:            anchor, dy_off = "middle",  0   # 270 = top
+        if   bis == 0:   anchor = "start"
+        elif bis == 180: anchor = "end"
+        else:            anchor = "middle"
 
-        # Split "High Risk" over two lines for the left label
         if " " in label:
-            words = label.split()
-            line1, line2 = words[0], " ".join(words[1:])
+            words  = label.split()
+            w1, w2 = words[0], " ".join(words[1:])
             P.append(
-                f'<text text-anchor="{anchor}" '
-                f'font-size="11" fill="{col}" font-weight="600" letter-spacing="0.3">'
-                f'<tspan x="{lx:.1f}" y="{ly - 7:.1f}">{line1}</tspan>'
-                f'<tspan x="{lx:.1f}" dy="14">{line2}</tspan>'
+                f'<text text-anchor="{anchor}" font-size="9.5" fill="{col}" '
+                f'font-weight="700" letter-spacing="1.2" opacity="0.85">'
+                f'<tspan x="{lx:.1f}" y="{ly - 7:.1f}">{w1}</tspan>'
+                f'<tspan x="{lx:.1f}" dy="13">{w2}</tspan>'
                 f'</text>'
             )
         else:
             P.append(
-                f'<text x="{lx:.1f}" y="{ly:.1f}" '
-                f'text-anchor="{anchor}" dominant-baseline="middle" '
-                f'font-size="11" fill="{col}" font-weight="600" letter-spacing="0.3">'
-                f'{label}</text>'
+                f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" '
+                f'dominant-baseline="middle" font-size="9.5" fill="{col}" '
+                f'font-weight="700" letter-spacing="1.2" opacity="0.85">{label}</text>'
             )
 
-    # ── Centre white disc + number + "Biomarkers" ───────────────────────────
+    # ── Centre white disc ────────────────────────────────────────────────────
     P.append(f'<circle cx="{CX}" cy="{CY}" r="{R_INNER - 12}" '
-             f'fill="white" stroke="rgba(190,190,210,0.5)" stroke-width="1.2"/>')
+             f'fill="white" stroke="rgba(190,190,210,0.4)" stroke-width="1"/>')
 
-    P.append(f'<text x="{CX}" y="{CY - 10}" text-anchor="middle" dominant-baseline="middle" '
-             f'font-size="54" font-weight="700" fill="#1a1a2e" letter-spacing="-2">'
-             f'{n_total}</text>')
-
-    P.append(f'<text x="{CX}" y="{CY + 30}" text-anchor="middle" dominant-baseline="middle" '
-             f'font-size="12" font-weight="400" fill="#9090aa" letter-spacing="0.8">'
-             f'Biomarkers</text>')
+    # Bold oversized central number (SF Pro / Inter style)
+    P.append(
+        f'<text x="{CX}" y="{CY - 8}" text-anchor="middle" dominant-baseline="middle" '
+        f'font-size="58" font-weight="800" fill="#111827" letter-spacing="-3" '
+        f'style="font-variant-numeric:tabular-nums;">{n_total}</text>'
+    )
+    # Light-weight uppercase label below number
+    P.append(
+        f'<text x="{CX}" y="{CY + 32}" text-anchor="middle" dominant-baseline="middle" '
+        f'font-size="9" font-weight="500" fill="#9ca3af" letter-spacing="2.5" '
+        f'text-transform="uppercase">BIOMARKERS</text>'
+    )
 
     P.append("</svg>")
 
@@ -884,41 +897,338 @@ def render_summary_cards(snapshot: pd.DataFrame):
 # RENDER: RESULTS TABLE
 # ─────────────────────────────────────────────
 
-def render_results_table(snapshot: pd.DataFrame):
+def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table"):
+    """
+    Focus View — clean clinical dashboard matching the InoRange reference design.
+
+    Architecture:
+      • A native st.selectbox (hidden label) drives filtering — this is the ONLY
+        interactive element; it triggers st.rerun() on change so the table
+        re-renders with the correct subset.  No JS↔Streamlit bridge needed.
+      • The visual card (header, description, legend, pill-button row, table)
+        is rendered as a single st.components.v1.html block — fully styled HTML.
+      • The active filter value is read from st.session_state BEFORE the HTML
+        is built, so the "Your essential insights: <Zone>" header always matches.
+    """
+    import math, html as _html_mod
+
     df = snapshot.copy()
-    df["_ord"] = df["status"].apply(_status_sort)
-    df = df.sort_values(["_ord", "test_name"]).drop(columns=["_ord"])
     df["unit"] = df["unit"].apply(clean_unit)
 
-    def fmt(v):
-        try: return f"{float(v):.4g}"
+    # ── Design tokens ────────────────────────────────────────────────────────
+    ZONE_C = {
+        "Optimal":   "#52c49a",
+        "Normal":    "#a78bdc",
+        "High Risk": "#f59b5e",
+        "Diseased":  "#ef6b6b",
+    }
+    ZONE_BG = {
+        "Optimal":   "rgba(82,196,154,0.13)",
+        "Normal":    "rgba(167,139,220,0.13)",
+        "High Risk": "rgba(245,155,94,0.13)",
+        "Diseased":  "rgba(239,107,107,0.13)",
+    }
+    ZONE_BORDER = {
+        "Optimal":   "rgba(82,196,154,0.45)",
+        "Normal":    "rgba(167,139,220,0.45)",
+        "High Risk": "rgba(245,155,94,0.45)",
+        "Diseased":  "rgba(239,107,107,0.45)",
+    }
+
+    # ── Helper: safe float ───────────────────────────────────────────────────
+    def _sf(v):
+        try:
+            f = float(v)
+            return None if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return None
+
+    # ── Classify every biomarker into one of the four zones ─────────────────
+    def classify_zone(row):
+        bm  = bm_lookup(row["test_name"])
+        s   = str(row.get("status", ""))
+        val = _sf(row["value"])
+        if val is None:
+            return "Normal"
+        if "CRITICAL" in s:
+            return "Diseased"
+        if "HIGH" in s or "LOW" in s:
+            if "HIGH" in s:
+                d_min = _sf(bm.get("diseased_min"))
+                if d_min is not None and val >= d_min:
+                    return "Diseased"
+            if "LOW" in s:
+                d_max = _sf(bm.get("diseased_max"))
+                if d_max is not None and val <= d_max:
+                    return "Diseased"
+            return "High Risk"
+        # Normal status — check optimal sub-range
+        o_min = _sf(bm.get("optimal_min"))
+        o_max = _sf(bm.get("optimal_max"))
+        if o_min is not None or o_max is not None:
+            if not (o_min is not None and val < o_min) and \
+               not (o_max is not None and val > o_max):
+                return "Optimal"
+        return "Normal"
+
+    # ── Build reference range string shown in the Range column ──────────────
+    def fmt_range(row):
+        bm   = bm_lookup(row["test_name"])
+        zone = row["_zone"]
+        # Pick the most relevant range for the zone
+        if zone == "Optimal":
+            lo, hi = _sf(bm.get("optimal_min")), _sf(bm.get("optimal_max"))
+        elif zone in ("High Risk", "Diseased"):
+            lo, hi = _sf(bm.get("high_risk_min")), _sf(bm.get("high_risk_max"))
+        else:
+            lo, hi = _sf(bm.get("normal_min")), _sf(bm.get("normal_max"))
+        # Fall back to normal range if zone-specific is missing
+        if lo is None and hi is None:
+            lo, hi = _sf(bm.get("normal_min")), _sf(bm.get("normal_max"))
+        if lo is not None and hi is not None:
+            return f"({lo:.4g} – {hi:.4g})"
+        if hi is not None:
+            return f"(< {hi:.4g})"
+        if lo is not None:
+            return f"(≥ {lo:.4g})"
+        return "—"
+
+    # ── Category / panel name ────────────────────────────────────────────────
+    def get_panel(row):
+        cat = bm_lookup(row["test_name"]).get("category", "")
+        return str(cat) if cat and str(cat).lower() not in ("nan", "none", "") else "—"
+
+    # ── Format value for display ─────────────────────────────────────────────
+    def fmt_val(v):
+        try:    return f"{float(v):.4g}"
         except: return str(v)
 
-    def fmt_status(s):
-        s = str(s) if pd.notna(s) else ""
-        if "CRITICAL" in s: return f"🔴 {s}"
-        if "HIGH"     in s: return f"🟠 {s}"
-        if "LOW"      in s: return f"🟡 {s}"
-        return f"🟢 Normal" if not s or s == "nan" else f"🟢 {s}"
+    # Enrich dataframe
+    df["_zone"]    = df.apply(classify_zone, axis=1)
+    df["_range"]   = df.apply(fmt_range, axis=1)
+    df["_panel"]   = df.apply(get_panel, axis=1)
+    df["_val_str"] = df["value"].apply(fmt_val)
 
-    display = pd.DataFrame({
-        "Test":   df["test_name"],
-        "Value":  df["value"].apply(fmt),
-        "Unit":   df["unit"],
-        "Status": df["status"].apply(fmt_status),
-    })
+    # ── Session-state key — unique per table_key so two tables can coexist ───
+    sk = f"fv_{table_key}_zone"
+    if sk not in st.session_state:
+        st.session_state[sk] = "All"
 
-    st.dataframe(
-        display,
-        width="stretch",
-        hide_index=True,
-        column_config={
-            "Test":   st.column_config.TextColumn("Test",   width="large"),
-            "Value":  st.column_config.TextColumn("Value",  width="small"),
-            "Unit":   st.column_config.TextColumn("Unit",   width="small"),
-            "Status": st.column_config.TextColumn("Status", width="medium"),
-        },
+    zone_options = ["All", "Optimal", "Normal", "High Risk", "Diseased"]
+
+    # ── Native selectbox — THE actual filter driver ──────────────────────────
+    # Rendered first, above the card, so state is set before HTML is built.
+    # We apply custom CSS to make it look like a rounded pill dropdown.
+    st.markdown("""
+    <style>
+    div[data-testid="stSelectbox"] > div > div {
+        border-radius: 10px !important;
+        border: 1.5px solid #e5e7eb !important;
+        background: #f9fafb !important;
+        font-size: 13.5px !important;
+        font-family: 'Inter', -apple-system, sans-serif !important;
+        color: #374151 !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+        padding: 2px 6px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    chosen = st.selectbox(
+        "Filter view",
+        zone_options,
+        index=zone_options.index(st.session_state[sk]),
+        key=f"{sk}_sel",
+        label_visibility="collapsed",
     )
+    if chosen != st.session_state[sk]:
+        st.session_state[sk] = chosen
+        st.rerun()
+
+    active_zone = st.session_state[sk]
+
+    # ── Derive header insight label ──────────────────────────────────────────
+    if active_zone == "All":
+        zone_counts = df["_zone"].value_counts().to_dict()
+        insight_z   = max(zone_counts, key=zone_counts.get) if zone_counts else "Normal"
+    else:
+        insight_z = active_zone
+
+    insight_color = ZONE_C.get(insight_z, "#52c49a")
+
+    # ── Filter data ──────────────────────────────────────────────────────────
+    view_df = df if active_zone == "All" else df[df["_zone"] == active_zone]
+    n_shown = len(view_df)
+
+    # ── HTML helpers ─────────────────────────────────────────────────────────
+    def pill(val, zone):
+        c  = ZONE_C.get(zone, "#52c49a")
+        bg = ZONE_BG.get(zone, "rgba(82,196,154,0.13)")
+        v  = _html_mod.escape(str(val))
+        return (
+            f'<span style="display:inline-block;padding:4px 16px;'
+            f'border-radius:24px;background:{bg};color:{c};'
+            f'font-weight:600;font-size:13.5px;min-width:58px;'
+            f'text-align:center;letter-spacing:-0.1px;'
+            f'font-family:inherit;">{v}</span>'
+        )
+
+    def zone_dot(z):
+        c = ZONE_C.get(z, "#52c49a")
+        return (
+            f'<span style="display:inline-block;width:9px;height:9px;'
+            f'border-radius:50%;background:{c};flex-shrink:0;"></span>'
+        )
+
+    # Legend
+    legend_html = '<div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0;">'
+    for z in ["Optimal", "Normal", "High Risk", "Diseased"]:
+        legend_html += (
+            f'<span style="display:flex;align-items:center;gap:7px;">'
+            f'{zone_dot(z)}'
+            f'<span style="font-size:11.5px;color:#6b7280;font-weight:400;">{z}</span>'
+            f'</span>'
+        )
+    legend_html += '</div>'
+
+    # Filter pill buttons (visual only — actual filter is the selectbox above)
+    pills_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px;">'
+    for opt in zone_options:
+        sel    = opt == active_zone
+        c      = ZONE_C.get(opt, "#374151")
+        bg     = ZONE_BG.get(opt, "rgba(55,65,81,0.08)") if sel else "#f9fafb"
+        border = ZONE_BORDER.get(opt, "#e5e7eb") if sel else "#e5e7eb"
+        fw     = "600" if sel else "400"
+        tc     = c if sel else "#6b7280"
+        count  = len(df) if opt == "All" else len(df[df["_zone"] == opt])
+        pills_html += (
+            f'<span style="padding:5px 16px;border-radius:20px;'
+            f'border:1.5px solid {border};background:{bg};color:{tc};'
+            f'font-weight:{fw};font-size:12.5px;display:inline-flex;'
+            f'align-items:center;gap:6px;cursor:default;">'
+            f'{opt}'
+            f'<span style="font-size:10.5px;background:{"white" if sel else "#f0f0f4"};'
+            f'color:#9ca3af;padding:0 5px;border-radius:8px;">{count}</span>'
+            f'</span>'
+        )
+    pills_html += '</div>'
+
+    # Table rows
+    rows_html = ""
+    for _, row in view_df.iterrows():
+        z    = row["_zone"]
+        name = _html_mod.escape(str(row["test_name"]))
+        unit = _html_mod.escape(str(row["unit"]))
+        rng  = _html_mod.escape(str(row["_range"]))
+        pan  = _html_mod.escape(str(row["_panel"]))
+        # Left border accent per zone
+        zc   = ZONE_C.get(z, "#52c49a")
+        rows_html += f"""
+<tr style="border-bottom:1px solid #f3f4f6;transition:background 0.12s;"
+    onmouseover="this.style.background='#fafafa'"
+    onmouseout="this.style.background='transparent'">
+  <td style="padding:15px 16px 15px 0;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="width:3px;height:34px;border-radius:2px;
+                   background:{zc};opacity:0.7;display:inline-block;flex-shrink:0;"></span>
+      <div>
+        <div style="font-size:13.5px;font-weight:500;color:#111827;
+                    line-height:1.35;">{name}</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:2px;">{unit}</div>
+      </div>
+    </div>
+  </td>
+  <td style="padding:15px 20px;text-align:center;vertical-align:middle;">
+    {pill(row['_val_str'], z)}
+  </td>
+  <td style="padding:15px 16px;font-size:13px;color:#9ca3af;
+             white-space:nowrap;vertical-align:middle;">{rng}</td>
+  <td style="padding:15px 0 15px 16px;font-size:13px;color:#6b7280;
+             vertical-align:middle;">{pan}</td>
+</tr>"""
+
+    empty_row = (
+        '<tr><td colspan="4" style="padding:40px;text-align:center;'
+        'color:#9ca3af;font-size:13px;">No biomarkers in this category.</td></tr>'
+    )
+
+    card_html = f"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  .fv-wrap * {{ box-sizing:border-box; }}
+</style>
+<div class="fv-wrap" style="
+  background:#ffffff;
+  border-radius:18px;
+  border:1px solid #f0f1f3;
+  box-shadow:0 4px 24px rgba(0,0,0,0.06);
+  padding:28px 28px 10px 28px;
+  font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  color:#111827;
+">
+
+  <!-- ── Header ── -->
+  <div style="margin-bottom:6px;">
+    <div style="font-size:23px;font-weight:700;letter-spacing:-0.6px;color:#0f172a;">
+      Focus View
+    </div>
+    <div style="font-size:14.5px;color:#9ca3af;margin-top:5px;font-weight:400;
+                line-height:1.4;">
+      Your essential insights:&nbsp;
+      <span style="color:{insight_color};font-weight:600;">{insight_z}</span>
+    </div>
+  </div>
+
+  <!-- ── Divider ── -->
+  <div style="border-top:1px solid #f0f1f3;margin:18px 0;"></div>
+
+  <!-- ── Description + Legend ── -->
+  <div style="display:flex;justify-content:space-between;
+              align-items:flex-start;gap:24px;margin-bottom:22px;">
+    <div style="font-size:13px;color:#6b7280;line-height:1.65;max-width:400px;">
+      Some biomarker data may require special attention.<br>
+      Use the filter above to explore subcategories to quickly
+      obtain essential insights.
+    </div>
+    {legend_html}
+  </div>
+
+  <!-- ── Filter pills (visual only — selectbox above is the driver) ── -->
+  {pills_html}
+
+  <!-- ── Table ── -->
+  <table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr style="border-bottom:1.5px solid #e5e7eb;">
+        <th style="padding:9px 16px 11px 0;text-align:left;font-size:11px;
+                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
+                   text-transform:uppercase;">Biomarker</th>
+        <th style="padding:9px 20px 11px;text-align:center;font-size:11px;
+                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
+                   text-transform:uppercase;">Current Value</th>
+        <th style="padding:9px 16px 11px;text-align:left;font-size:11px;
+                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
+                   text-transform:uppercase;">Range</th>
+        <th style="padding:9px 0 11px 16px;text-align:left;font-size:11px;
+                   font-weight:500;color:#9ca3af;letter-spacing:0.6px;
+                   text-transform:uppercase;">Biomarker Panel</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows_html or empty_row}
+    </tbody>
+  </table>
+
+  <!-- ── Footer count ── -->
+  <div style="padding:14px 0 4px;font-size:11.5px;color:#d1d5db;
+              text-align:right;font-weight:400;">
+    {n_shown}&nbsp;biomarker{"s" if n_shown != 1 else ""}&nbsp;shown
+  </div>
+</div>
+"""
+    # Height: header ~200px + per-row ~58px + footer ~60px
+    estimated_height = 290 + n_shown * 58
+    st.components.v1.html(card_html, height=estimated_height, scrolling=False)
 
 
 # ─────────────────────────────────────────────
@@ -1753,7 +2063,7 @@ if page == "Upload Reports":
                     if view_mode_ul == "Biomarker Cards":
                         render_biomarker_cards(snapshot, history=history)
                     else:
-                        render_results_table(snapshot)
+                        render_results_table(snapshot, table_key=f"upload_{pid}")
                     st.download_button(
                         "↓ Export CSV",
                         data=snapshot.to_csv(index=False).encode("utf-8"),
@@ -1964,7 +2274,7 @@ elif page == "Patient Profiles":
                 if view_mode == "Biomarker Cards":
                     render_biomarker_cards(snapshot, history=history)
                 else:
-                    render_results_table(snapshot)
+                    render_results_table(snapshot, table_key=f"profile_{selected_pid}")
 
                 # ── FIX: Only ONE download button here (duplicate was removed) ──
                 st.download_button(
