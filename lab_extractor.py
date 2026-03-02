@@ -10,6 +10,14 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
+# OCR fallback — used when pdfplumber yields insufficient text (scanned PDFs)
+try:
+    from pdf2image import convert_from_path as _pdf2img
+    import pytesseract as _tess
+    _OCR_AVAILABLE = True
+except ImportError:
+    _OCR_AVAILABLE = False
+
 BASE_DIR    = Path(__file__).parent
 DATA_DIR    = BASE_DIR / "data"
 STORE_DIR   = DATA_DIR / "patient_profiles"
@@ -502,35 +510,65 @@ def process_pdf(pdf_path, verbose=False):
     """
     Extract biomarkers + metadata from a PDF lab report.
     Returns (DataFrame, raw_text). DataFrame is empty if extraction fails.
+
+    Strategy:
+      1. Try pdfplumber (fast, accurate for digital PDFs).
+      2. If text yield is too thin (< 80 words), fall back to Tesseract OCR
+         via pdf2image — handles scanned / image-only PDFs.
     """
     pdf_path = Path(pdf_path)
+
+    # ── Step 1: pdfplumber ────────────────────────────────────────────────
+    text = ""
     with pdfplumber.open(pdf_path) as pdf:
-        text = ""
         for page in pdf.pages:
             t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
             text += t + "\n"
+
+    ocr_used = False
+
+    # ── Step 2: OCR fallback ─────────────────────────────────────────────
+    if _OCR_AVAILABLE and len(text.split()) < 80:
+        try:
+            images = _pdf2img(str(pdf_path), dpi=300)
+            ocr_pages = []
+            for img in images:
+                ocr_pages.append(
+                    _tess.image_to_string(img, config="--psm 6")
+                )
+            ocr_text = "\n".join(ocr_pages)
+            if len(ocr_text.split()) > len(text.split()):
+                text = ocr_text
+                ocr_used = True
+        except Exception:
+            pass   # OCR failed — continue with whatever pdfplumber got
 
     meta    = extract_metadata(text)
     pid     = make_patient_id(meta)
     results = extract_biomarkers(text, gender=meta.get("gender", ""))
 
     if verbose:
-        print(f"  {pdf_path.name}: {len(results)} tests | {meta.get('name','?')} | {meta.get('date','?')}")
+        mode = " [OCR]" if ocr_used else ""
+        print(f"  {pdf_path.name}{mode}: {len(results)} tests | {meta.get('name','?')} | {meta.get('date','?')}")
 
     if not results:
         return pd.DataFrame(), text
 
     df = pd.DataFrame(results)
-    df["patient_id"]   = pid
-    df["patient_name"] = meta["name"]
-    df["gender"]       = meta.get("gender", "")
-    df["age_at_test"]  = meta.get("age", "")
-    df["report_date"]  = meta["date"]
-    df["source_file"]  = pdf_path.name
-    df["file_hash"]    = file_hash(pdf_path)
+    df["patient_id"]     = pid
+    df["patient_name"]   = meta["name"]
+    df["gender"]         = meta.get("gender", "")
+    df["age_at_test"]    = meta.get("age", "")
+    df["report_date"]    = meta["date"]
+    df["source_file"]    = pdf_path.name
+    df["file_hash"]      = file_hash(pdf_path)
+    df["ocr_extracted"]  = ocr_used
 
     if meta.get("age") and meta.get("date"):
-        df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
+        try:
+            df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
+        except (ValueError, TypeError):
+            df["birth_year"] = None
     else:
         df["birth_year"] = None
 

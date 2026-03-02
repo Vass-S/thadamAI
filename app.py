@@ -1017,10 +1017,16 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
     zone_options = ["All", "Optimal", "Normal", "High Risk", "Diseased"]
 
     # ── Native selectbox — THE actual filter driver ──────────────────────────
-    # Rendered first, above the card, so state is set before HTML is built.
-    # We apply custom CSS to make it look like a rounded pill dropdown.
+    # label_visibility="collapsed" hides the label; selectbox never allows
+    # custom text input — options are fixed to the four zone names + All.
     st.markdown("""
     <style>
+    /* Hide the search/type input inside the Focus View zone selectbox */
+    div[data-testid="stSelectbox"] input[type="text"] {
+        pointer-events: none !important;
+        caret-color: transparent !important;
+        user-select: none !important;
+    }
     div[data-testid="stSelectbox"] > div > div {
         border-radius: 10px !important;
         border: 1.5px solid #e5e7eb !important;
@@ -1029,7 +1035,6 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
         font-family: 'Inter', -apple-system, sans-serif !important;
         color: #374151 !important;
         box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
-        padding: 2px 6px !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -1934,25 +1939,6 @@ if page == "Upload Reports":
         label_visibility="collapsed",
     )
 
-    if uploaded_files:
-        with st.expander("⚙️  Date overrides — use if date was not auto-detected", expanded=False):
-            st.caption(
-                "Leave blank to use the date extracted from the PDF. "
-                "Fill in only if Trends shows 'need at least 2 reports' "
-                "after uploading multiple reports for the same patient."
-            )
-            date_overrides: dict = {}
-            for uf in uploaded_files:
-                v = st.text_input(
-                    f"{uf.name}  (YYYY-MM-DD)", value="",
-                    key=f"date_override_{uf.name}",
-                    placeholder="e.g. 2024-11-28",
-                )
-                if v.strip():
-                    date_overrides[uf.name] = v.strip()
-    else:
-        date_overrides = {}
-
     if uploaded_files and st.button("⟳  Process Reports", type="primary"):
         progress           = st.progress(0)
         results_by_patient: dict = {}
@@ -1973,14 +1959,10 @@ if page == "Upload Reports":
                 continue
 
             extracted_date = str(df["report_date"].iloc[0]) if not df.empty else ""
-            override       = date_overrides.get(uf.name, "").strip()
-            if override:
-                df["report_date"] = override
-                st.caption(f"📅 Date override applied for **{uf.name}**: {override}")
-            elif not extracted_date or extracted_date in ("", "nan", "NaT", "None"):
+            if not extracted_date or extracted_date in ("", "nan", "NaT", "None"):
                 st.warning(
-                    f"⚠️ **{uf.name}** — date not detected. "
-                    "Expand **Date overrides** above, enter the date, then re-process."
+                    f"⚠️ **{uf.name}** — report date could not be detected automatically. "
+                    "Please check the source PDF."
                 )
 
             ocr_used = bool(df.get("ocr_extracted", pd.Series([False])).iloc[0])
@@ -1999,7 +1981,7 @@ if page == "Upload Reports":
                     meta_corr   = get_metadata_corrections(df, llm_result)
                     meta_issues = meta_corr.get("metadata_issues", [])
 
-                    if meta_corr.get("date_correction") and not override:
+                    if meta_corr.get("date_correction"):
                         df["report_date"] = meta_corr["date_correction"]
                         st.caption(
                             f"📅 Date found by Claude ({meta_corr.get('date_source','')}) → "
@@ -2047,23 +2029,9 @@ if page == "Upload Reports":
                 tab1, tab2 = st.tabs(["Latest Results", "Trends"])
                 with tab1:
                     snapshot = get_snapshot(history)
-                    col_l, col_r = st.columns([1, 1.3])
-                    with col_l:
-                        render_summary_cards(snapshot)
-                    with col_r:
-                        render_radial_overview(snapshot, filter_status="all")
+                    render_radial_overview(snapshot, filter_status="all")
                     st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
-                    view_mode_ul = st.radio(
-                        "View as",
-                        ["Biomarker Cards", "Table"],
-                        horizontal=True,
-                        key=f"upload_view_{pid}",
-                        label_visibility="collapsed",
-                    )
-                    if view_mode_ul == "Biomarker Cards":
-                        render_biomarker_cards(snapshot, history=history)
-                    else:
-                        render_results_table(snapshot, table_key=f"upload_{pid}")
+                    render_results_table(snapshot, table_key=f"upload_{pid}")
                     st.download_button(
                         "↓ Export CSV",
                         data=snapshot.to_csv(index=False).encode("utf-8"),
@@ -2191,92 +2159,34 @@ elif page == "Patient Profiles":
             with tab1:
                 snapshot = get_snapshot(history)
 
+                # Summary stats
                 total    = len(snapshot)
                 critical = snapshot["status"].str.contains("CRITICAL", na=False).sum()
                 abnormal = snapshot["status"].str.contains("HIGH|LOW", na=False).sum()
                 normal   = total - abnormal
-                oor      = abnormal - critical
                 pct_ok   = int(normal / total * 100) if total else 0
                 bar_col  = ACCENT if pct_ok >= 80 else (AMBER if pct_ok >= 60 else ORANGE)
 
-                filter_key = f"radial_filter_{selected_pid}"
-                if filter_key not in st.session_state:
-                    st.session_state[filter_key] = "all"
-                active_filter = st.session_state[filter_key]
+                render_summary_cards(snapshot)
 
-                col_left, col_right = st.columns([1, 1.3])
+                st.markdown(f"""
+                <div style="margin-bottom:1rem">
+                  <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+                    <span style="font-size:0.75rem;color:{MUTED}">Within-Range Score</span>
+                    <span style="font-size:0.8rem;font-weight:700;color:{bar_col}">{pct_ok}%</span>
+                  </div>
+                  <div style="background:{BORDER};border-radius:8px;height:6px">
+                    <div style="width:{pct_ok}%;height:100%;background:{bar_col};
+                           border-radius:8px;transition:width 0.6s ease"></div>
+                  </div>
+                </div>""", unsafe_allow_html=True)
 
-                with col_left:
-                    cards = [
-                        ("all",      total,    TEXT,   "Total Tests"),
-                        ("normal",   normal,   ACCENT, "Within Range"),
-                        ("oor",      oor,      ORANGE, "Out of Range"),
-                        ("critical", critical, CRIT,   "Critical"),
-                    ]
-                    c1, c2, c3, c4 = st.columns(4)
-                    for col_btn, (fkey, num, color, label) in zip([c1,c2,c3,c4], cards):
-                        is_active = active_filter == fkey
-                        bg = f"rgba({','.join(str(int(color[i:i+2],16)) for i in (1,3,5))},0.08)" if is_active and color != TEXT else (LIGHT if is_active else SURFACE)
-                        border = f"2px solid {color}" if is_active else f"1px solid {BORDER}"
-                        with col_btn:
-                            st.markdown(f"""
-                            <div style="background:{bg};border:{border};border-radius:14px;
-                                 padding:1rem 0.5rem;text-align:center;cursor:pointer;
-                                 box-shadow:{'0 4px 14px rgba(0,0,0,0.10)' if is_active else '0 1px 4px rgba(0,0,0,0.04)'};
-                                 transition:all 0.15s;margin-bottom:2px">
-                              <div style="font-size:2rem;font-weight:700;color:{color};
-                                   line-height:1;letter-spacing:-1px">{num}</div>
-                              <div style="font-size:0.68rem;color:{MUTED};margin-top:5px;
-                                   font-weight:{'600' if is_active else '400'}">{label}</div>
-                            </div>""", unsafe_allow_html=True)
-                            if st.button("Filter", key=f"flt_{selected_pid}_{fkey}",
-                                         width="stretch",
-                                         help=f"Show {label} in radial chart"):
-                                st.session_state[filter_key] = fkey
-                                st.rerun()
-
-                    st.markdown(f"""
-                    <div style="margin-top:0.75rem;margin-bottom:0.5rem">
-                      <div style="display:flex;justify-content:space-between;margin-bottom:5px">
-                        <span style="font-size:0.75rem;color:{MUTED}">Within-Range Score</span>
-                        <span style="font-size:0.8rem;font-weight:700;color:{bar_col}">{pct_ok}%</span>
-                      </div>
-                      <div style="background:{BORDER};border-radius:8px;height:6px">
-                        <div style="width:{pct_ok}%;height:100%;background:{bar_col};
-                               border-radius:8px;transition:width 0.6s ease"></div>
-                      </div>
-                    </div>""", unsafe_allow_html=True)
-
-                with col_right:
-                    filter_labels = {"all": "All Biomarkers", "normal": "Within Range",
-                                     "oor": "Out of Range", "critical": "Critical Only"}
-                    st.markdown(
-                        f'<div style="font-size:0.85rem;font-weight:600;color:{TEXT};margin-bottom:1px">'
-                        f'Biomarker Map · <span style="color:{MUTED};font-weight:400;font-size:0.8rem">'
-                        f'{filter_labels.get(active_filter,"All")}</span></div>'
-                        f'<div style="font-size:0.72rem;color:{MUTED};margin-bottom:0.4rem;line-height:1.5">'
-                        f'Each dot is one biomarker. Dots in the <b style="color:{ACCENT}">teal inner ring</b> are optimal. '
-                        f'Dots in the <b style="color:{ORANGE}">outer ring</b> need attention. '
-                        f'Click a card on the left to highlight a group.</div>',
-                        unsafe_allow_html=True
-                    )
-                    render_radial_overview(snapshot, filter_status=active_filter)
+                render_radial_overview(snapshot, filter_status="all")
 
                 st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
 
-                view_mode = st.radio(
-                    "View as",
-                    ["Biomarker Cards", "Table"],
-                    horizontal=True,
-                    key=f"view_mode_{selected_pid}",
-                    label_visibility="collapsed",
-                )
-                if view_mode == "Biomarker Cards":
-                    render_biomarker_cards(snapshot, history=history)
-                else:
-                    render_results_table(snapshot, table_key=f"profile_{selected_pid}")
+                render_results_table(snapshot, table_key=f"profile_{selected_pid}")
 
-                # ── FIX: Only ONE download button here (duplicate was removed) ──
                 st.download_button(
                     "↓ Export Latest CSV",
                     data=snapshot.to_csv(index=False).encode("utf-8"),
