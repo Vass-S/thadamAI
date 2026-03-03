@@ -61,20 +61,30 @@ _BUILTIN_PROFILES = {
             "kauvery medical centre",
         ],
         "metadata_patterns": {
+            # pdfplumber may collapse Kauvery's two-column header into single lines.
+            # Patterns use lookahead stops (Order, Report, 2+ spaces, newline).
             "name": [
-                r"Patient\s*Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w][\w\s]+?)(?:\s{2,}|\n|Order\s*Date|Age\s*/\s*Gender)",
-                r"(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+([\w]+(?:\s+[\w]+){0,5})\s*(?:\n|\s{3,})",
+                # "Patient Name : Mr. Vijey Kumar K B   Order No : ..."
+                r"Patient\s*Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w][\w\s]+?)(?=\s{2,}|\s+Order\b|\s+Age\s*/|\n)",
+                # Fallback: title prefix
+                r"(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+([\w]+(?:\s+[\w]+){0,5})(?=\s{2,}|\s+Order|\s+Age\s*/|\s*\n|\s+\d)",
             ],
             "age": [
-                r"Age\s*/\s*Gender\s*[:\-]\s*(\d+)\s*/\s*Years",
+                # "Age / Gender : 39/Years/Male"  OR  "Age / Gender : 39/Male"  (Years optional)
+                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d+)",
+                # "Age : 39"
                 r"Age\s*[:\-]\s*(\d+)",
             ],
             "gender": [
-                r"Age\s*/\s*Gender\s*[:\-]\s*\d+\s*/\s*Years\s*/\s*(Male|Female)",
-                r"Gender\s*[:\-]\s*(Male|Female)",
-                r"Sex\s*[:\-]\s*(Male|Female)",
+                # "Age / Gender : 39/Years/Male"  (Years optional, M/F or Male/Female)
+                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*\d+\s*/?\s*(?:Years?|Yrs?)?\s*/?\s*(Male|Female|M|F)\b",
+                # "Gender : Male"  or  "Sex : M"
+                r"(?:Gender|Sex)\s*[:\-]\s*(Male|Female|M|F)",
+                # Bare word fallback — appears near the Age line
+                r"\b(Male|Female)\b",
             ],
             "date": [
+                # "Report Date : 19/01/2026 04:50 PM"
                 r"Report\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
                 r"Collected\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
                 r"Order\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
@@ -161,19 +171,23 @@ _BUILTIN_PROFILES = {
         "detect_keywords": [],
         "metadata_patterns": {
             "name": [
-                r"Patient\s*Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w][\w\s]+?)(?:\s{2,}|\n|Order|Age)",
+                # Kauvery-style: stop at 'Order' (pdfplumber collapses columns to 1 space)
+                r"Patient\s*Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w][\w\s]+?)(?:\s+Order\b|\s+Age\s*/\s*Gender|\s{2,}|\n)",
+                # HiTech-style with age/gender in parens
                 r"Patient\s*[:\-]\s*(?:[A-Z]\d+\s+)?(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)\s*\(\d+\s*/\s*[MF]\)",
-                r"(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+([\w]+(?:\s+[\w]+){0,5})\s*(?:\n|\(|\d|\s{3,})",
+                # Title-based
+                r"(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+([\w]+(?:\s+[\w]+){0,5})(?=\s+Order|\s+Age\s*/|\s*\n|\s{2,}|\s+\d)",
             ],
             "age": [
-                r"Age\s*/\s*Gender\s*[:\-]\s*(\d+)\s*/\s*Years",
+                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d+)",
                 r"Patient\s*[:\-]\s*.*?\((\d+)\s*/\s*[MF]\)",
                 r"Age\s*[:\-]\s*(\d+)",
             ],
             "gender": [
-                r"Age\s*/\s*Gender\s*[:\-]\s*\d+\s*/\s*Years\s*/\s*(Male|Female)",
+                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*\d+\s*/?\s*(?:Years?|Yrs?)?\s*/?\s*(Male|Female|M|F)\b",
                 r"Patient\s*[:\-]\s*.*?\(\d+\s*/\s*([MF])\)",
                 r"(?:Sex|Gender)\s*[:\-]\s*(Male|Female|M|F)",
+                r"\b(Male|Female)\b",
             ],
             "date": [
                 r"Report\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
@@ -494,10 +508,82 @@ def normalize_unit(unit: str, lab_unit_fixes: dict = None) -> str:
 
 def _try_patterns(text: str, patterns: list) -> str | None:
     for pattern in patterns:
-        m = re.search(pattern, text, re.I)
-        if m:
-            return m.group(1).strip()
+        try:
+            m = re.search(pattern, text, re.I)
+            if m:
+                return m.group(1).strip()
+        except re.error:
+            pass
     return None
+
+
+def _extract_kauvery_age_gender(text: str) -> tuple:
+    """
+    Dedicated extractor for Kauvery's 'Age / Gender : 39/Years/Male' line.
+    Returns (age_int_or_None, gender_str_or_empty).
+    Handles all real-world pdfplumber output variants including:
+      - spaces/slashes between tokens
+      - Years/Yrs optional
+      - Male/Female or M/F
+      - merged columns (trailing Report Date text)
+      - non-breaking spaces and unicode variants
+    """
+    age   = None
+    gender = ""
+
+    # Normalise: replace unicode spaces/colons to ASCII
+    clean = text.replace("\xa0", " ").replace("\uff1a", ":").replace("|", "/")
+
+    # Strategy 1: structured Age/Gender line
+    # Matches: "Age / Gender : 39/Years/Male" with any whitespace/slash variation
+    age_gender_line = re.search(
+        r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d{1,3})\s*/?\s*(?:Years?|Yrs?)?\s*/?\s*(Male|Female|M|F)\b",
+        clean, re.I
+    )
+    if age_gender_line:
+        try:
+            age = int(age_gender_line.group(1))
+        except (ValueError, TypeError):
+            pass
+        g = age_gender_line.group(2).upper()
+        gender = "M" if g in ("M", "MALE") else "F" if g in ("F", "FEMALE") else ""
+        return age, gender
+
+    # Strategy 2: age only from Age/Gender line (gender on next scan)
+    age_only = re.search(
+        r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d{1,3})",
+        clean, re.I
+    )
+    if age_only:
+        try:
+            age = int(age_only.group(1))
+        except (ValueError, TypeError):
+            pass
+
+    # Fallback age: "Age : 39" standalone
+    if age is None:
+        m = re.search(r"\bAge\s*[:\-]\s*(\d{1,3})\b", clean, re.I)
+        if m:
+            try:
+                age = int(m.group(1))
+            except (ValueError, TypeError):
+                pass
+
+    # Strategy 3: gender from any clear indicator in the text
+    for pat in [
+        r"(?:Gender|Sex)\s*[:\-]\s*(Male|Female|M|F)\b",
+        r"/\s*(Male|Female)\b",
+        r"\b(Male|Female)\b",
+        r"\b([MF])\s*/\s*\d",   # "M/39" format (reversed)
+    ]:
+        m = re.search(pat, clean, re.I)
+        if m:
+            g = m.group(1).upper()
+            gender = "M" if g in ("M", "MALE") else "F" if g in ("F", "FEMALE") else ""
+            if gender:
+                break
+
+    return age, gender
 
 
 def _parse_date(date_str: str, fmts: list) -> str:
@@ -515,43 +601,68 @@ def extract_metadata(text: str, profile: dict = None) -> dict:
     Extract patient metadata using lab-specific profile patterns.
     Handles Kauvery, HiTech, Metropolis and generic formats.
     Returns dict: name, gender, date, age, phone, lab_id.
+
+    For Kauvery reports: uses dedicated _extract_kauvery_age_gender()
+    which handles all real-world pdfplumber output variants.
     """
     if profile is None:
         lab_id  = detect_lab(text)
         profile = _load_profile(lab_id)
 
+    lab_id = profile.get("lab_id", "generic")
     meta = {
         "name": "", "gender": "", "date": "",
         "age": None, "phone": "",
-        "lab_id": profile.get("lab_id", "generic"),
+        "lab_id": lab_id,
     }
     pats = profile.get("metadata_patterns", {})
 
+    # ── Name ──────────────────────────────────────────────────────────
     raw_name = _try_patterns(text, pats.get("name", []))
     if raw_name:
         raw_name = re.sub(r'\b(Mr|Mrs|Ms|Dr|Miss)\.?\s*', '', raw_name, flags=re.I)
         raw_name = re.sub(r'\b[A-Z]\d+\b', '', raw_name)
         meta["name"] = re.sub(r'\s+', ' ', raw_name).strip().upper()
 
-    raw_age = _try_patterns(text, pats.get("age", []))
-    if raw_age:
-        try:
-            meta["age"] = int(raw_age)
-        except ValueError:
-            pass
+    # ── Age + Gender ───────────────────────────────────────────────────
+    # For Kauvery: use the dedicated extractor which handles all variants.
+    # For other labs: use profile patterns, then fall back to Kauvery extractor.
+    if lab_id == "kauvery":
+        kauv_age, kauv_gender = _extract_kauvery_age_gender(text)
+        if kauv_age is not None:
+            meta["age"] = kauv_age
+        if kauv_gender:
+            meta["gender"] = kauv_gender
+    else:
+        raw_age = _try_patterns(text, pats.get("age", []))
+        if raw_age:
+            try:
+                meta["age"] = int(raw_age)
+            except ValueError:
+                pass
 
-    raw_gender = _try_patterns(text, pats.get("gender", []))
-    if raw_gender:
-        val = raw_gender.strip().upper()
-        if val in ("MALE", "M"):
-            meta["gender"] = "M"
-        elif val in ("FEMALE", "F"):
-            meta["gender"] = "F"
+        raw_gender = _try_patterns(text, pats.get("gender", []))
+        if raw_gender:
+            val = raw_gender.strip().upper()
+            if val in ("MALE", "M"):
+                meta["gender"] = "M"
+            elif val in ("FEMALE", "F"):
+                meta["gender"] = "F"
 
+    # If age/gender still missing, try the Kauvery extractor as universal fallback
+    if meta["age"] is None or not meta["gender"]:
+        fb_age, fb_gender = _extract_kauvery_age_gender(text)
+        if meta["age"] is None and fb_age is not None:
+            meta["age"] = fb_age
+        if not meta["gender"] and fb_gender:
+            meta["gender"] = fb_gender
+
+    # ── Date ──────────────────────────────────────────────────────────
     raw_date = _try_patterns(text, pats.get("date", []))
     if raw_date:
         meta["date"] = _parse_date(raw_date, profile.get("date_formats", _DATE_FMTS))
 
+    # ── Phone (same across all labs) ──────────────────────────────────
     m = re.search(r"(?:Tel|Ph|Phone|Mobile)\s*(?:No\.?)?\s*[:\-]?\s*\+?(\d[\d\s\-]{9,})", text, re.I)
     if m:
         digits = re.sub(r'\D', '', m.group(1))

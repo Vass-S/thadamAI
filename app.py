@@ -792,42 +792,29 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
             )
 
     # ── Zone labels — rotated text running along each quadrant edge ──────────
-    # Each label is placed at the midpoint of its arc, rotated to follow the
-    # circle tangent so text reads naturally from the outside.
-    # Font size bumped to 12.5px (was 9.5px) and opacity increased to 1.0.
+    # ── Zone labels — bold UPPERCASE, rotated to run along each quadrant edge ──
     for z, meta in ZONE_META.items():
         bis    = meta["bisector"]
-        label  = meta["label"]          # keep mixed-case: "High Risk", "Optimal" etc.
+        label  = meta["label"].upper()   # BOLD UPPERCASE per spec
         col    = C[z]
-        r_lbl  = R_GREY + 30            # slightly further out for larger font
+        r_lbl  = R_GREY + 32            # outside the grey circle
 
         lx, ly = to_xy(bis, r_lbl)
 
-        # Rotation angle: tangent to the circle at the bisector point
-        # For a circle, the tangent at angle θ points in direction (θ + 90°)
-        # We want the text to be upright and readable:
-        #   - right side  (bis=0):   rotate 270° so text reads upward  → anchor=middle
-        #   - bottom side (bis=90):  rotate 0°  so text reads left→right
-        #   - left side   (bis=180): rotate 90° so text reads downward → anchor=middle
-        #   - top side    (bis=270): rotate 180° so text reads right→left (flip)
-        # Simpler: use rotate() SVG transform anchored at label centre.
-        # Convention: "readable" = text never more than 90° from horizontal.
-        if bis == 0:      rot = -90   # right edge — rotate -90 so it reads top→bottom
-        elif bis == 90:   rot = 0     # bottom edge — horizontal, reads left→right
-        elif bis == 180:  rot = 90    # left edge — rotate 90 so it reads bottom→top
-        else:             rot = 180   # top edge — rotate 180 (upside down → flip to read right)
+        # Rotation so text is always readable (never upside-down):
+        #   bis=0   (right edge)  → rotate -90 → reads bottom-to-top
+        #   bis=90  (bottom)      → rotate 0   → reads left-to-right
+        #   bis=180 (left edge)   → rotate 90  → reads top-to-bottom
+        #   bis=270 (top)         → rotate 0   → reads left-to-right (horizontal)
+        rot_map = {0: -90, 90: 0, 180: 90, 270: 0}
+        rot = rot_map.get(bis, 0)
 
-        # For top edge (bis=270), invert to keep readable:
-        if bis == 270:
-            rot = 0     # horizontal reads nicely at top too
-
-        # Use SVG transform="rotate(angle, cx, cy)" on a <text> element
         P.append(
             f'<text '
             f'x="{lx:.1f}" y="{ly:.1f}" '
             f'text-anchor="middle" dominant-baseline="middle" '
-            f'font-size="12.5" fill="{col}" '
-            f'font-weight="700" letter-spacing="0.8" opacity="1.0" '
+            f'font-size="13" fill="{col}" '
+            f'font-weight="800" letter-spacing="1.5" opacity="1.0" '
             f'transform="rotate({rot},{lx:.1f},{ly:.1f})">'
             f'{label}'
             f'</text>'
@@ -908,7 +895,8 @@ def render_summary_cards(snapshot: pd.DataFrame):
 # RENDER: RESULTS TABLE
 # ─────────────────────────────────────────────
 
-def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table"):
+def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table",
+                         zone_override: str = None):
     """
     Focus View — clean clinical dashboard matching the InoRange reference design.
 
@@ -1027,41 +1015,46 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
 
     zone_options = ["All", "Optimal", "Normal", "High Risk", "Diseased"]
 
-    # ── Native selectbox — THE actual filter driver ──────────────────────────
-    # label_visibility="collapsed" hides the label; selectbox never allows
-    # custom text input — options are fixed to the four zone names + All.
-    st.markdown("""
-    <style>
-    /* Hide the search/type input inside the Focus View zone selectbox */
-    div[data-testid="stSelectbox"] input[type="text"] {
-        pointer-events: none !important;
-        caret-color: transparent !important;
-        user-select: none !important;
-    }
-    div[data-testid="stSelectbox"] > div > div {
-        border-radius: 10px !important;
-        border: 1.5px solid #e5e7eb !important;
-        background: #f9fafb !important;
-        font-size: 13.5px !important;
-        font-family: 'Inter', -apple-system, sans-serif !important;
-        color: #374151 !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # ── If zone_override supplied (shared dropdown from parent), use it ──────
+    # Otherwise render the internal selectbox as the filter driver.
+    if zone_override is not None:
+        # Sync internal state to the override so if selectbox is ever used
+        # it starts from the right position
+        st.session_state[sk] = zone_override
+        active_zone = zone_override
+    else:
+        # ── Internal selectbox — THE actual filter driver ────────────────────
+        st.markdown("""
+        <style>
+        /* Hide the search/type input inside the Focus View zone selectbox */
+        div[data-testid="stSelectbox"] input[type="text"] {
+            pointer-events: none !important;
+            caret-color: transparent !important;
+            user-select: none !important;
+        }
+        div[data-testid="stSelectbox"] > div > div {
+            border-radius: 10px !important;
+            border: 1.5px solid #e5e7eb !important;
+            background: #f9fafb !important;
+            font-size: 13.5px !important;
+            font-family: 'Inter', -apple-system, sans-serif !important;
+            color: #374151 !important;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
-    chosen = st.selectbox(
-        "Filter view",
-        zone_options,
-        index=zone_options.index(st.session_state[sk]),
-        key=f"{sk}_sel",
-        label_visibility="collapsed",
-    )
-    if chosen != st.session_state[sk]:
-        st.session_state[sk] = chosen
-        st.rerun()
-
-    active_zone = st.session_state[sk]
+        chosen = st.selectbox(
+            "Filter view",
+            zone_options,
+            index=zone_options.index(st.session_state[sk]),
+            key=f"{sk}_sel",
+            label_visibility="collapsed",
+        )
+        if chosen != st.session_state[sk]:
+            st.session_state[sk] = chosen
+            st.rerun()
+        active_zone = st.session_state[sk]
 
     # ── Derive header insight label ──────────────────────────────────────────
     if active_zone == "All":
@@ -2103,6 +2096,8 @@ elif page == "Patient Profiles":
                     st.markdown("<div style='margin-top:0.35rem'></div>", unsafe_allow_html=True)
                     if st.button("🗑 Delete", key="del_report_btn"):
                         if delete_report_by_date(selected_pid, del_date):
+                            # Also clear any pending LLM review for this date
+                            delete_pending_review(selected_pid, del_date)
                             st.success(f"Deleted {del_date}.")
                             st.rerun()
                         else:
@@ -2115,6 +2110,10 @@ elif page == "Patient Profiles":
                 )
                 st.warning(f"This will permanently erase all data for **{current_name}**.")
                 if st.button("⛔ Delete Patient", key="del_patient_btn"):
+                    # Clear all pending LLM reviews for this patient first
+                    for review in load_pending_reviews():
+                        if review.get("patient_id") == selected_pid:
+                            delete_pending_review(selected_pid, review.get("report_date", ""))
                     delete_patient(selected_pid)
                     st.success("Deleted.")
                     st.rerun()
@@ -2140,7 +2139,7 @@ elif page == "Patient Profiles":
                   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap');
                   .ov-page {{
                     font-family: 'DM Sans', -apple-system, sans-serif;
-                    padding: 4px 0 20px;
+                    padding: 4px 0 16px;
                   }}
                   .ov-heading {{
                     font-size: 30px; font-weight: 700; color: #0f172a;
@@ -2155,78 +2154,158 @@ elif page == "Patient Profiles":
                   <div class="ov-sub">Biomarker health summary &nbsp;·&nbsp; {total} tests tracked</div>
                 </div>""", unsafe_allow_html=True)
 
-                # ── Two-column card layout ────────────────────────────────────
-                col_l, col_r = st.columns([1, 1.08], gap="large")
+                # ── Full-width Summary card ───────────────────────────────────
+                st.markdown(f"""
+                <div style="background:#ffffff;border-radius:20px;
+                     border:1px solid #f1f5f9;
+                     box-shadow:0 2px 20px rgba(15,23,42,0.06);
+                     padding:28px 28px 24px 28px;
+                     font-family:'DM Sans',-apple-system,sans-serif;
+                     margin-bottom:20px;">
+
+                  <div style="font-size:18px;font-weight:700;color:#0f172a;
+                              letter-spacing:-0.3px;line-height:1.2;margin-bottom:4px;">
+                    Summary
+                  </div>
+                  <div style="font-size:13px;color:#94a3b8;margin-bottom:18px;">
+                    Your biomarker results at a glance
+                  </div>
+
+                  <div style="border-top:1px solid #f1f5f9;margin-bottom:18px;"></div>
+
+                  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;">
+                    <div style="background:#f8fafc;border-radius:12px;padding:16px 12px;text-align:center;">
+                      <div style="font-size:28px;font-weight:700;color:#0f172a;line-height:1;">{total}</div>
+                      <div style="font-size:10px;letter-spacing:0.6px;text-transform:uppercase;color:#94a3b8;margin-top:5px;font-weight:600;">Total</div>
+                    </div>
+                    <div style="background:#f0fdf9;border-radius:12px;padding:16px 12px;text-align:center;">
+                      <div style="font-size:28px;font-weight:700;color:#16a34a;line-height:1;">{normal}</div>
+                      <div style="font-size:10px;letter-spacing:0.6px;text-transform:uppercase;color:#94a3b8;margin-top:5px;font-weight:600;">In Range</div>
+                    </div>
+                    <div style="background:#fff7ed;border-radius:12px;padding:16px 12px;text-align:center;">
+                      <div style="font-size:28px;font-weight:700;color:#f59b5e;line-height:1;">{oor}</div>
+                      <div style="font-size:10px;letter-spacing:0.6px;text-transform:uppercase;color:#94a3b8;margin-top:5px;font-weight:600;">Attention</div>
+                    </div>
+                    <div style="background:#fff1f2;border-radius:12px;padding:16px 12px;text-align:center;">
+                      <div style="font-size:28px;font-weight:700;color:#ef6b6b;line-height:1;">{critical}</div>
+                      <div style="font-size:10px;letter-spacing:0.6px;text-transform:uppercase;color:#94a3b8;margin-top:5px;font-weight:600;">Critical</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                      <span style="font-size:12px;color:#94a3b8;font-weight:500;">Within-range score</span>
+                      <span style="font-size:12px;font-weight:700;color:{bar_col};">{pct_ok}%</span>
+                    </div>
+                    <div style="background:#f1f5f9;border-radius:6px;height:6px;">
+                      <div style="width:{pct_ok}%;height:100%;background:{bar_col};border-radius:6px;transition:width 0.6s ease;"></div>
+                    </div>
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+                # ── Shared zone filter — drives BOTH radial chart and focus view table
+                _zone_sk = f"pp_zone_{selected_pid}"
+                if _zone_sk not in st.session_state:
+                    st.session_state[_zone_sk] = "All"
+                zone_options = ["All", "Optimal", "Normal", "High Risk", "Diseased"]
+
+                # ── Two-column layout: left = Biomarker Status, right = Focus View
+                col_l, col_r = st.columns([1, 1.05], gap="large")
 
                 with col_l:
-                    # ── Left card: Results Summary ────────────────────────────
-                    st.markdown(f"""
-                    <div style="background:#ffffff;border-radius:20px;
-                         border:1px solid #f1f5f9;
+                    # Card: heading only (top portion)
+                    st.markdown("""
+                    <div style="background:#ffffff;border-radius:20px 20px 0 0;
+                         border:1px solid #f1f5f9;border-bottom:none;
                          box-shadow:0 2px 20px rgba(15,23,42,0.06);
-                         padding:28px 28px 0 28px;
+                         padding:22px 20px 16px 20px;
                          font-family:'DM Sans',-apple-system,sans-serif;">
-
-                      <div style="font-size:20px;font-weight:700;color:#0f172a;
-                                  letter-spacing:-0.4px;line-height:1.2;margin-bottom:4px;">
-                        Summary
+                      <div style="font-size:18px;font-weight:700;color:#0f172a;
+                                  letter-spacing:-0.3px;line-height:1.2;margin-bottom:2px;">
+                        BIOMARKER STATUS
                       </div>
-                      <div style="font-size:13px;color:#94a3b8;margin-bottom:20px;">
-                        Your biomarker results at a glance
-                      </div>
-
-                      <div style="border-top:1px solid #f1f5f9;margin-bottom:20px;"></div>
-
-                      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
-                        <div style="background:#f8fafc;border-radius:12px;padding:14px 10px;text-align:center;">
-                          <div style="font-size:22px;font-weight:700;color:#0f172a;line-height:1;">{total}</div>
-                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Total</div>
-                        </div>
-                        <div style="background:#f0fdf9;border-radius:12px;padding:14px 10px;text-align:center;">
-                          <div style="font-size:22px;font-weight:700;color:#52c49a;line-height:1;">{normal}</div>
-                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Optimal</div>
-                        </div>
-                        <div style="background:#fff7ed;border-radius:12px;padding:14px 10px;text-align:center;">
-                          <div style="font-size:22px;font-weight:700;color:#f59b5e;line-height:1;">{oor}</div>
-                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Attention</div>
-                        </div>
-                        <div style="background:#fff1f2;border-radius:12px;padding:14px 10px;text-align:center;">
-                          <div style="font-size:22px;font-weight:700;color:#ef6b6b;line-height:1;">{critical}</div>
-                          <div style="font-size:10px;letter-spacing:0.5px;text-transform:uppercase;color:#94a3b8;margin-top:4px;font-weight:500;">Critical</div>
-                        </div>
-                      </div>
-
-                      <div style="margin-bottom:22px;">
-                        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-                          <span style="font-size:12px;color:#94a3b8;font-weight:500;">Within-range score</span>
-                          <span style="font-size:12px;font-weight:700;color:{bar_col};">{pct_ok}%</span>
-                        </div>
-                        <div style="background:#f1f5f9;border-radius:6px;height:5px;">
-                          <div style="width:{pct_ok}%;height:100%;background:{bar_col};border-radius:6px;transition:width 0.6s ease;"></div>
-                        </div>
+                      <div style="font-size:12px;color:#94a3b8;margin-bottom:0;">
+                        Distribution across health zones
                       </div>
                     </div>""", unsafe_allow_html=True)
 
-                    # Radial chart sits below the stat block, inside the same visual card
+                    # Radial chart seamlessly joins below the heading card
                     st.markdown("""
                     <div style="background:#ffffff;border-radius:0 0 20px 20px;
                          border:1px solid #f1f5f9;border-top:none;
                          box-shadow:0 2px 20px rgba(15,23,42,0.06);
-                         padding:0 12px 24px;margin-top:-2px;">
+                         padding:0 8px 20px;margin-top:0;">
                     """, unsafe_allow_html=True)
-                    render_radial_overview(snapshot, filter_status="all")
+
+                    _active_zone = st.session_state[_zone_sk]
+                    _radial_filter = (
+                        "all"      if _active_zone == "All"      else
+                        "optimal"  if _active_zone == "Optimal"  else
+                        "normal"   if _active_zone == "Normal"   else
+                        "oor"      if _active_zone == "High Risk" else
+                        "critical" if _active_zone == "Diseased"  else "all"
+                    )
+                    render_radial_overview(snapshot, filter_status=_radial_filter)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with col_r:
-                    # ── Right card: Focus View ────────────────────────────────
+                    # Card: heading + dropdown inline (top portion)
                     st.markdown("""
-                    <div style="background:#ffffff;border-radius:20px;
-                         border:1px solid #f1f5f9;
+                    <div style="background:#ffffff;border-radius:20px 20px 0 0;
+                         border:1px solid #f1f5f9;border-bottom:none;
                          box-shadow:0 2px 20px rgba(15,23,42,0.06);
-                         padding:28px 24px 16px;
+                         padding:22px 20px 14px 20px;
                          font-family:'DM Sans',-apple-system,sans-serif;">
+                      <div style="font-size:18px;font-weight:700;color:#0f172a;
+                                  letter-spacing:-0.3px;line-height:1.2;margin-bottom:2px;">
+                        FOCUS VIEW
+                      </div>
+                      <div style="font-size:12px;color:#94a3b8;margin-bottom:12px;">
+                        Filter biomarkers by health zone
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+
+                    # Single shared dropdown — styled inline
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stSelectbox"] > div > div {
+                        border-radius: 10px !important;
+                        border: 1.5px solid #e5e7eb !important;
+                        background: #f9fafb !important;
+                        font-size: 13.5px !important;
+                        font-family: 'DM Sans', -apple-system, sans-serif !important;
+                        color: #374151 !important;
+                        box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
+                    }
+                    div[data-testid="stSelectbox"] input[type="text"] {
+                        pointer-events: none !important;
+                        caret-color: transparent !important;
+                    }
+                    </style>""", unsafe_allow_html=True)
+
+                    _chosen = st.selectbox(
+                        "Filter zone",
+                        zone_options,
+                        index=zone_options.index(st.session_state[_zone_sk]),
+                        key=f"{_zone_sk}_sel",
+                        label_visibility="collapsed",
+                    )
+                    if _chosen != st.session_state[_zone_sk]:
+                        st.session_state[_zone_sk] = _chosen
+                        st.rerun()
+
+                    # Focus View table inside lower card
+                    st.markdown("""
+                    <div style="background:#ffffff;border-radius:0 0 20px 20px;
+                         border:1px solid #f1f5f9;border-top:none;
+                         box-shadow:0 2px 20px rgba(15,23,42,0.06);
+                         padding:0 0 4px 0;margin-top:0;">
                     """, unsafe_allow_html=True)
-                    render_results_table(snapshot, table_key=f"profile_{selected_pid}")
+                    render_results_table(
+                        snapshot,
+                        table_key=f"profile_{selected_pid}",
+                        zone_override=st.session_state[_zone_sk],
+                    )
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 st.download_button(
@@ -2322,6 +2401,58 @@ elif page == "Patient Profiles":
 
 elif page == "LLM Review":
     st.markdown('<div class="section-label">LLM Verification Review</div>', unsafe_allow_html=True)
+
+    # ── Button colour overrides — Accept=green, Reject=red ────────────────────
+    st.markdown("""
+    <style>
+    /* ── LLM Review: Accept buttons — green background, white text ── */
+    /* Must override the global .stButton primary rule (ACCENT colour) */
+    section[data-testid="stMain"] button[kind="primary"] {
+        background-color: #16a34a !important;
+        border-color: #15803d !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+    }
+    section[data-testid="stMain"] button[kind="primary"] p,
+    section[data-testid="stMain"] button[kind="primary"] span {
+        color: #ffffff !important;
+        font-weight: 700 !important;
+    }
+    section[data-testid="stMain"] button[kind="primary"]:hover {
+        background-color: #15803d !important;
+        border-color: #166534 !important;
+    }
+    /* ── LLM Review: Reject buttons — white/light-red, red text ── */
+    section[data-testid="stMain"] button[kind="secondary"] {
+        background-color: #fff5f5 !important;
+        border: 1.5px solid #fca5a5 !important;
+        color: #dc2626 !important;
+        font-weight: 700 !important;
+    }
+    section[data-testid="stMain"] button[kind="secondary"] p,
+    section[data-testid="stMain"] button[kind="secondary"] span {
+        color: #dc2626 !important;
+        font-weight: 700 !important;
+    }
+    section[data-testid="stMain"] button[kind="secondary"]:hover {
+        background-color: #fee2e2 !important;
+        border-color: #ef4444 !important;
+    }
+    section[data-testid="stMain"] button[kind="secondary"]:hover p,
+    section[data-testid="stMain"] button[kind="secondary"]:hover span {
+        color: #b91c1c !important;
+    }
+    /* ── Accept All / Reject All: wider size ── */
+    section[data-testid="stMain"] [data-testid="stHorizontalBlock"] button {
+        min-width: 120px !important;
+        padding: 6px 16px !important;
+        border-radius: 8px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown(
         "Claude audited each report for **missing fields**, **wrong/missing units**, "
         "**date detection**, **out-of-range values**, and **missed tests**. "
@@ -2516,8 +2647,15 @@ elif page == "LLM Review":
                                  if t not in accepted_tests and t not in rejected_tests]
                     date_done = apply_date  or reject_date  or not date_correction
                     name_done = apply_name  or reject_name  or not name_correction
+
+                    # Remove review entry as soon as ALL items are resolved,
+                    # then rerun so the expander disappears immediately.
                     if not remaining and date_done and name_done:
                         delete_pending_review(pid, report_date)
+                        st.rerun()
+                    elif any_decision:
+                        # Partial decision: rerun so the UI refreshes cleanly.
+                        # Next render will re-show only unresolved items.
                         st.rerun()
 
 
