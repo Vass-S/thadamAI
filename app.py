@@ -611,13 +611,13 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
     n_total = len(df)
 
     # ── SVG canvas ─────────────────────────────────────────────────────────
-    # Larger canvas (640) gives room for labels outside the grey circle
-    W,  H  = 640, 640
+    # Larger canvas (680) gives room for bigger rotated labels outside the grey circle
+    W,  H  = 680, 680
     CX, CY = W / 2, H / 2
 
     R_INNER    = 95    # inner edge of dot track
     R_OUTER    = 240   # outer edge of dot track
-    R_GREY     = 260   # grey background circle radius
+    R_GREY     = 265   # grey background circle radius
     R_STEP     = 21    # radial gap between stacked dot rows
     DOT_R      = 7.5   # dot radius
     DOT_GAP    = 13    # minimum degrees between dots in a row
@@ -791,36 +791,47 @@ def render_radial_overview(snapshot: pd.DataFrame, filter_status: str = "all"):
                 f'</circle>'
             )
 
-    # ── Zone labels — curved uppercase text outside grey circle ──────────────
-    # Each label follows its arc; we use textPath on a circular arc path for
-    # top/bottom zones and straight text with rotation for left/right.
+    # ── Zone labels — rotated text running along each quadrant edge ──────────
+    # Each label is placed at the midpoint of its arc, rotated to follow the
+    # circle tangent so text reads naturally from the outside.
+    # Font size bumped to 12.5px (was 9.5px) and opacity increased to 1.0.
     for z, meta in ZONE_META.items():
-        bis   = meta["bisector"]
-        label = meta["label"].upper()
-        col   = C[z]
-        r_lbl = R_GREY + 26
+        bis    = meta["bisector"]
+        label  = meta["label"]          # keep mixed-case: "High Risk", "Optimal" etc.
+        col    = C[z]
+        r_lbl  = R_GREY + 30            # slightly further out for larger font
+
         lx, ly = to_xy(bis, r_lbl)
 
-        if   bis == 0:   anchor = "start"
-        elif bis == 180: anchor = "end"
-        else:            anchor = "middle"
+        # Rotation angle: tangent to the circle at the bisector point
+        # For a circle, the tangent at angle θ points in direction (θ + 90°)
+        # We want the text to be upright and readable:
+        #   - right side  (bis=0):   rotate 270° so text reads upward  → anchor=middle
+        #   - bottom side (bis=90):  rotate 0°  so text reads left→right
+        #   - left side   (bis=180): rotate 90° so text reads downward → anchor=middle
+        #   - top side    (bis=270): rotate 180° so text reads right→left (flip)
+        # Simpler: use rotate() SVG transform anchored at label centre.
+        # Convention: "readable" = text never more than 90° from horizontal.
+        if bis == 0:      rot = -90   # right edge — rotate -90 so it reads top→bottom
+        elif bis == 90:   rot = 0     # bottom edge — horizontal, reads left→right
+        elif bis == 180:  rot = 90    # left edge — rotate 90 so it reads bottom→top
+        else:             rot = 180   # top edge — rotate 180 (upside down → flip to read right)
 
-        if " " in label:
-            words  = label.split()
-            w1, w2 = words[0], " ".join(words[1:])
-            P.append(
-                f'<text text-anchor="{anchor}" font-size="9.5" fill="{col}" '
-                f'font-weight="700" letter-spacing="1.2" opacity="0.85">'
-                f'<tspan x="{lx:.1f}" y="{ly - 7:.1f}">{w1}</tspan>'
-                f'<tspan x="{lx:.1f}" dy="13">{w2}</tspan>'
-                f'</text>'
-            )
-        else:
-            P.append(
-                f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" '
-                f'dominant-baseline="middle" font-size="9.5" fill="{col}" '
-                f'font-weight="700" letter-spacing="1.2" opacity="0.85">{label}</text>'
-            )
+        # For top edge (bis=270), invert to keep readable:
+        if bis == 270:
+            rot = 0     # horizontal reads nicely at top too
+
+        # Use SVG transform="rotate(angle, cx, cy)" on a <text> element
+        P.append(
+            f'<text '
+            f'x="{lx:.1f}" y="{ly:.1f}" '
+            f'text-anchor="middle" dominant-baseline="middle" '
+            f'font-size="12.5" fill="{col}" '
+            f'font-weight="700" letter-spacing="0.8" opacity="1.0" '
+            f'transform="rotate({rot},{lx:.1f},{ly:.1f})">'
+            f'{label}'
+            f'</text>'
+        )
 
     # ── Centre white disc ────────────────────────────────────────────────────
     P.append(f'<circle cx="{CX}" cy="{CY}" r="{R_INNER - 12}" '
@@ -1086,23 +1097,6 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
         )
 
 
-    # ── Legend matching reference image (Out of Range / Normal / Good / Optimal) ─
-    legend_html = '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">'
-    for _z, _col, _lbl in [
-        ("Diseased",  "#ef6b6b", "Out of Range"),
-        ("High Risk", "#f59b5e", "Normal"),
-        ("Normal",    "#a78bdc", "Good"),
-        ("Optimal",   "#52c49a", "Optimal"),
-    ]:
-        legend_html += (
-            '<span style="display:flex;align-items:center;gap:7px;">'
-            f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
-            f'background:{_col};flex-shrink:0;"></span>'
-            f'<span style="font-size:11.5px;color:#6b7280;">{_lbl}</span>'
-            '</span>'
-        )
-    legend_html += '</div>'
-
     # ── Table rows ────────────────────────────────────────────────────────────
     rows_html = ""
     for _, row in view_df.iterrows():
@@ -1166,7 +1160,7 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
 
         # Header
         '<div style="margin-bottom:5px;">'
-        '<div style="font-size:22px;font-weight:700;letter-spacing:-0.5px;color:#0f172a;line-height:1.2;">InoRange - Focus View</div>'
+        '<div style="font-size:22px;font-weight:700;letter-spacing:-0.5px;color:#0f172a;line-height:1.2;">Focus View</div>'
         f'<div style="font-size:13.5px;color:#94a3b8;margin-top:5px;font-weight:400;">'
         f'Your essential insights:&nbsp;<span style="color:{insight_color};font-weight:600;">{insight_z}</span>'
         f'</div></div>'
@@ -1174,13 +1168,12 @@ def render_results_table(snapshot: pd.DataFrame, table_key: str = "focus_table")
         # Divider
         '<div style="border-top:1px solid #f1f5f9;margin:16px 0;"></div>'
 
-        # Description + legend
-        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:20px;">'
-        '<div style="font-size:13px;color:#6b7280;line-height:1.7;max-width:340px;">'
+        # Description only — legend removed per design spec
+        '<div style="margin-bottom:20px;">'
+        '<div style="font-size:13px;color:#6b7280;line-height:1.7;">'
         'Some biomarker data may require special attention. '
         'Use the focus view to explore subcategories to quickly obtain essential insights.'
         '</div>'
-        + legend_html +
         '</div>'
 
         # Dropdown (visual indicator — functional selectbox is above this iframe)
@@ -2176,7 +2169,7 @@ elif page == "Patient Profiles":
 
                       <div style="font-size:20px;font-weight:700;color:#0f172a;
                                   letter-spacing:-0.4px;line-height:1.2;margin-bottom:4px;">
-                        InoRange - Summary
+                        Summary
                       </div>
                       <div style="font-size:13px;color:#94a3b8;margin-bottom:20px;">
                         Your biomarker results at a glance
