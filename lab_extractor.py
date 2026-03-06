@@ -610,12 +610,29 @@ def process_pdf(pdf_path, api_key: str, verbose: bool = False) -> tuple:
 # STORAGE  —  SQLite upsert
 # =============================================================================
 
+def _to_py_int(v) -> int | None:
+    """Convert numpy int / bytes / str to plain Python int, or None."""
+    if v is None:
+        return None
+    if isinstance(v, (bytes, bytearray)):
+        # sqlite3.Row can return INTEGER columns as little-endian bytes on Py 3.13
+        return int.from_bytes(v, "little", signed=True)
+    try:
+        i = int(v)
+        return i if 0 < i < 3000 else None   # sanity-check for year values
+    except (TypeError, ValueError):
+        return None
+
+
 def save_report(df: pd.DataFrame) -> None:
     """Upsert patient metadata and insert biomarker records. Ignores exact duplicates."""
     if df.empty:
         return
     r0  = df.iloc[0]
     pid = str(r0["patient_id"])
+
+    # Always store birth_year as a plain Python int (not numpy.int64)
+    birth_year = _to_py_int(r0.get("birth_year"))
 
     with _db() as conn:
         existing = conn.execute(
@@ -629,7 +646,7 @@ def save_report(df: pd.DataFrame) -> None:
                 " VALUES (?, ?, ?, ?, ?)",
                 (pid, new_name,
                  str(r0.get("gender", "")),
-                 r0.get("birth_year"),
+                 birth_year,
                  str(r0.get("phone", "")))
             )
         elif len(new_name) > len(existing["patient_name"]):
@@ -690,9 +707,9 @@ def load_history(patient_id: str) -> pd.DataFrame:
     if patient:
         df["patient_name"] = patient["patient_name"]
         df["gender"]       = patient["gender"]
-        by = patient["birth_year"]
+        by = _to_py_int(patient["birth_year"])
         df["current_age"]  = (
-            (datetime.now().year - int(by))
+            (datetime.now().year - by)
             if by else df.get("age_at_test", pd.Series(dtype="object"))
         )
 
