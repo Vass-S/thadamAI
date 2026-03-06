@@ -1,383 +1,124 @@
 """
-Longitudinal Biomarker Intelligence Platform v5
-Robust extraction + longitudinal trends + patient profiles
+Longitudinal Biomarker Intelligence Platform
+lab_extractor.py  —  v6  (Phase 1: LLM-first extraction + SQLite)
 
-v5 changes (OCR logic is COMPLETELY UNCHANGED from v4):
-  - Lab-specific extraction profiles (Kauvery, HiTech, Metropolis, Generic)
-    stored in data/lab_profiles/<lab_id>.json — auto-detected per PDF
-  - Kauvery profile handles:
-      "Patient Name : Mr. Vijey Kumar K B"  (name on own line)
-      "Age / Gender : 39/Years/Male"        (separate age/gender line)
-      "Report Date : 19/01/2026 04:50 PM"   (DD/MM/YYYY with time)
-      10^6/µL, 10^3/µL, g/dL, mg/L         (extended unit map)
-      "(ABBREV) Test Name" prefix stripping
-      Structured "Name  Result  Unit  Ref Range" table columns
-  - HiTech/Metropolis/Generic profiles — wrap existing v4 patterns
-  - Profiles persist to data/lab_profiles/*.json; unit strings accumulate
-    so each upload teaches the system about that lab's format
-  - Free-text extract_biomarkers() UNCHANGED (used as fallback + supplement)
-  - All OCR imports, threshold, page loop — EXACTLY as in v4
+Pipeline per PDF:
+  1. pdfplumber → raw text  (OCR fallback if text < 80 words)
+  2. Claude Haiku → structured JSON  {patient, tests[]}
+  3. Regex validation  (numeric values, date parsing, unit normalisation)
+  4. Dictionary enrichment:
+       known test  → 4-zone classification, canonical unit, category
+       unknown test → lab's own reference_range for Normal/Abnormal
+  5. SQLite upsert  (patients + biomarker_records)
+
+Removed vs v5:
+  - All lab profile JSON files and regex extraction profiles
+  - EXTRA_ALIASES, alias scanning, extract_biomarkers(), extract_from_table()
+  - extract_metadata() and all its kauvery/hitech/generic patterns
+  - Per-patient CSV files  →  single SQLite database
 """
 
 import re
 import json
 import hashlib
+import sqlite3
 import pdfplumber
 import pandas as pd
+import anthropic
 from pathlib import Path
 from datetime import datetime
+from contextlib import contextmanager
 
-# ── OCR fallback — UNCHANGED FROM v4 ─────────────────────────────────────────
+# ── OCR fallback (unchanged logic from v5) ────────────────────────────────────
 try:
     from pdf2image import convert_from_path as _pdf2img
     import pytesseract as _tess
     _OCR_AVAILABLE = True
 except ImportError:
     _OCR_AVAILABLE = False
-# ─────────────────────────────────────────────────────────────────────────────
 
-BASE_DIR     = Path(__file__).parent
-DATA_DIR     = BASE_DIR / "data"
-STORE_DIR    = DATA_DIR / "patient_profiles"
-DICT_PATH    = DATA_DIR / "Biomarker_dictionary_csv.csv"
-PROFILES_DIR = DATA_DIR / "lab_profiles"
+# ── Paths ──────────────────────────────────────────────────────────────────────
+BASE_DIR  = Path(__file__).parent
+DATA_DIR  = BASE_DIR / "data"
+DICT_PATH = DATA_DIR / "Biomarker_dictionary_csv.csv"
+DB_PATH   = DATA_DIR / "biomarker.db"
 
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Kept for backward compat — llm_verifier.py stores pending reviews here
+STORE_DIR = DATA_DIR / "patient_profiles"
 STORE_DIR.mkdir(parents=True, exist_ok=True)
-PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# LAB PROFILES
-# Each profile lives in data/lab_profiles/<lab_id>.json.
-# On first use the builtin defaults are used and the file is written, then
-# unit strings seen in real reports accumulate automatically.
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# SQLITE  — two tables, WAL mode, foreign keys
+# =============================================================================
 
-_BUILTIN_PROFILES = {
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS patients (
+    patient_id   TEXT PRIMARY KEY,
+    patient_name TEXT NOT NULL,
+    gender       TEXT DEFAULT '',
+    birth_year   INTEGER,
+    phone        TEXT DEFAULT '',
+    created_at   TEXT DEFAULT (datetime('now'))
+);
 
-    "kauvery": {
-        "detect_keywords": [
-            "kauvery", "kauvery hospital", "kauvery reference laboratory",
-            "kauvery medical centre",
-        ],
-        "metadata_patterns": {
-            # pdfplumber may collapse Kauvery's two-column header into single lines.
-            # Patterns use lookahead stops (Order, Report, 2+ spaces, newline).
-            "name": [
-                # "Patient Name : Mr. Vijey Kumar K B   Order No : ..."
-                r"Patient\s*Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w][\w\s]+?)(?=\s{2,}|\s+Order\b|\s+Age\s*/|\n)",
-                # Fallback: title prefix
-                r"(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+([\w]+(?:\s+[\w]+){0,5})(?=\s{2,}|\s+Order|\s+Age\s*/|\s*\n|\s+\d)",
-            ],
-            "age": [
-                # "Age / Gender : 39/Years/Male"  OR  "Age / Gender : 39/Male"  (Years optional)
-                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d+)",
-                # "Age : 39"
-                r"Age\s*[:\-]\s*(\d+)",
-            ],
-            "gender": [
-                # "Age / Gender : 39/Years/Male"  (Years optional, M/F or Male/Female)
-                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*\d+\s*/?\s*(?:Years?|Yrs?)?\s*/?\s*(Male|Female|M|F)\b",
-                # "Gender : Male"  or  "Sex : M"
-                r"(?:Gender|Sex)\s*[:\-]\s*(Male|Female|M|F)",
-                # Bare word fallback — appears near the Age line
-                r"\b(Male|Female)\b",
-            ],
-            "date": [
-                # "Report Date : 19/01/2026 04:50 PM"
-                r"Report\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
-                r"Collected\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
-                r"Order\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
-                r"(\d{2}/\d{2}/\d{4})",
-            ],
-        },
-        "date_formats": ["%d/%m/%Y", "%m/%d/%Y"],
-        "unit_fixes": {
-            "10^6/ul": "10^6/µL", "10^6/µl": "10^6/µL",
-            "10^3/ul": "10^3/µL", "10^3/µl": "10^3/µL",
-            "g/dl": "g/dL", "mg/l": "mg/L", "mg/dl": "mg/dL",
-            "fl": "fL", "pg": "pg", "mmol/l": "mmol/L", "umol/l": "µmol/L",
-        },
-        "test_name_transforms": [
-            (r"^\([A-Z0-9\-]+\)\s*", ""),
-            (r"\s*Method\s*:.*$", ""),
-            (r"\s*\*+\s*$", ""),
-        ],
-        "table_structure": {"has_table": True,
-                            "col_order": ["test_name", "result", "unit", "reference_range"]},
-        "section_headers": [
-            "Haematology", "Clinical chemistry", "SEROLOGY",
-            "Biochemistry", "Urine Analysis", "Microbiology",
-            "Complete Blood Count", "CBC", "Lipid Profile",
-        ],
-    },
+CREATE TABLE IF NOT EXISTS biomarker_records (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id      TEXT NOT NULL REFERENCES patients(patient_id),
+    report_date     TEXT NOT NULL,
+    test_name       TEXT NOT NULL,
+    raw_test_name   TEXT,
+    canonical_name  TEXT,
+    value           REAL NOT NULL,
+    unit            TEXT DEFAULT '',
+    reference_range TEXT DEFAULT '',
+    status          TEXT DEFAULT '',
+    category        TEXT DEFAULT '',
+    lab_name        TEXT DEFAULT '',
+    source_file     TEXT DEFAULT '',
+    file_hash       TEXT DEFAULT '',
+    ocr_extracted   INTEGER DEFAULT 0,
+    age_at_test     INTEGER,
+    created_at      TEXT DEFAULT (datetime('now')),
+    UNIQUE(patient_id, report_date, test_name)
+);
 
-    "hitech": {
-        "detect_keywords": [
-            "hitech", "hi tech", "hitech diagnostics", "hi-tech",
-            "hitech reference", "hi tech reference",
-        ],
-        "metadata_patterns": {
-            "name": [
-                r"Patient\s*[:\-]\s*(?:[A-Z]\d+\s+)?(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)\s*\(\d+\s*/\s*[MF]\)",
-                r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w]+(?:\s+\w+)?)\s*(?:\n|$|Reference|VID)",
-            ],
-            "age": [
-                r"Patient\s*[:\-]\s*.*?\((\d+)\s*/\s*[MF]\)",
-                r"Age\s*[:\-]\s*(\d+)",
-            ],
-            "gender": [
-                r"Patient\s*[:\-]\s*.*?\(\d+\s*/\s*([MF])\)",
-                r"Sex\s*[:\-]\s*(Male|Female|M|F)",
-            ],
-            "date": [
-                r"(?:Reported\s+On|Report\s+Date|Collected\s+On)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-                r"SID\s+Date\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-                r"(\d{2}[\/\-]\d{2}[\/\-]\d{4})",
-            ],
-        },
-        "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"],
-        "unit_fixes": {},
-        "test_name_transforms": [],
-        "table_structure": {"has_table": False, "col_order": []},
-        "section_headers": [],
-    },
-
-    "metropolis": {
-        "detect_keywords": [
-            "metropolis", "metropolis healthcare", "metropolis labs",
-            "metropolis health services",
-        ],
-        "metadata_patterns": {
-            "name": [
-                r"(?:Mr\.|Mrs\.|Ms\.)\s+([\w]+(?:\s+[\w]+){0,4})\s*(?:\n|$|Reference|VID|Patient)",
-                r"Patient\s*Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)(?:\n|$|Age|Sex)",
-            ],
-            "age":    [r"Age\s*[:\-]\s*(\d+)"],
-            "gender": [r"Sex\s*[:\-]\s*(Male|Female|M|F)"],
-            "date": [
-                r"(?:Reported\s+On|Report\s+Date|Collected\s+On|Collection\s+Date)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-                r"(\d{2}[\/\-]\d{2}[\/\-]\d{4})",
-            ],
-        },
-        "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y"],
-        "unit_fixes": {},
-        "test_name_transforms": [],
-        "table_structure": {"has_table": False, "col_order": []},
-        "section_headers": [],
-    },
-
-    "generic": {
-        "detect_keywords": [],
-        "metadata_patterns": {
-            "name": [
-                # Kauvery-style: stop at 'Order' (pdfplumber collapses columns to 1 space)
-                r"Patient\s*Name\s*[:\-]\s*(?:Mr\.|Mrs\.|Ms\.|Dr\.)?\s*([\w][\w\s]+?)(?:\s+Order\b|\s+Age\s*/\s*Gender|\s{2,}|\n)",
-                # HiTech-style with age/gender in parens
-                r"Patient\s*[:\-]\s*(?:[A-Z]\d+\s+)?(?:Mr\.|Mrs\.|Ms\.)?\s*([\w\s]+?)\s*\(\d+\s*/\s*[MF]\)",
-                # Title-based
-                r"(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+([\w]+(?:\s+[\w]+){0,5})(?=\s+Order|\s+Age\s*/|\s*\n|\s{2,}|\s+\d)",
-            ],
-            "age": [
-                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d+)",
-                r"Patient\s*[:\-]\s*.*?\((\d+)\s*/\s*[MF]\)",
-                r"Age\s*[:\-]\s*(\d+)",
-            ],
-            "gender": [
-                r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*\d+\s*/?\s*(?:Years?|Yrs?)?\s*/?\s*(Male|Female|M|F)\b",
-                r"Patient\s*[:\-]\s*.*?\(\d+\s*/\s*([MF])\)",
-                r"(?:Sex|Gender)\s*[:\-]\s*(Male|Female|M|F)",
-                r"\b(Male|Female)\b",
-            ],
-            "date": [
-                r"Report\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
-                r"Collected\s*Date\s*[:\-]\s*(\d{1,2}/\d{1,2}/\d{4})",
-                r"(?:Reported\s+On|Report\s+Date|Collected\s+On|Collection\s+Date)\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-                r"SID\s+Date\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})",
-                r"(\d{2}[\/\-]\d{2}[\/\-]\d{4})",
-            ],
-        },
-        "date_formats": ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"],
-        "unit_fixes": {
-            "10^6/ul": "10^6/µL", "10^6/µl": "10^6/µL",
-            "10^3/ul": "10^3/µL", "10^3/µl": "10^3/µL",
-            "g/dl": "g/dL", "mg/l": "mg/L", "mg/dl": "mg/dL", "fl": "fL",
-        },
-        "test_name_transforms": [
-            (r"^\([A-Z0-9\-]+\)\s*", ""),
-            (r"\s*Method\s*:.*$", ""),
-            (r"\s*\*+\s*$", ""),
-        ],
-        "table_structure": {"has_table": False, "col_order": []},
-        "section_headers": [],
-    },
-}
+CREATE INDEX IF NOT EXISTS idx_br_patient ON biomarker_records(patient_id);
+CREATE INDEX IF NOT EXISTS idx_br_date    ON biomarker_records(report_date);
+CREATE INDEX IF NOT EXISTS idx_br_hash    ON biomarker_records(file_hash);
+"""
 
 
-def detect_lab(text: str) -> str:
-    lower = text.lower()
-    for lab_id, profile in _BUILTIN_PROFILES.items():
-        if lab_id == "generic":
-            continue
-        for kw in profile.get("detect_keywords", []):
-            if kw in lower:
-                return lab_id
-    return "generic"
-
-
-def _load_profile(lab_id: str) -> dict:
-    path    = PROFILES_DIR / f"{lab_id}.json"
-    builtin = _BUILTIN_PROFILES.get(lab_id, _BUILTIN_PROFILES["generic"]).copy()
-    if path.exists():
-        try:
-            with open(path) as f:
-                saved = json.load(f)
-            if saved.get("unit_fixes"):
-                merged = dict(builtin.get("unit_fixes", {}))
-                merged.update(saved["unit_fixes"])
-                builtin["unit_fixes"] = merged
-        except Exception:
-            pass
-    builtin["lab_id"] = lab_id
-    return builtin
-
-
-def _save_profile(lab_id: str, profile: dict) -> None:
-    path = PROFILES_DIR / f"{lab_id}.json"
+@contextmanager
+def _db():
+    """Yield a committed SQLite connection; rollback on exception."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     try:
-        with open(path, "w") as f:
-            json.dump({"unit_fixes": profile.get("unit_fixes", {})}, f, indent=2)
+        yield conn
+        conn.commit()
     except Exception:
-        pass
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-# ─────────────────────────────────────────────
-# ALIASES & EXTRA BIOMARKERS
-# ─────────────────────────────────────────────
+def _init_db():
+    with _db() as conn:
+        conn.executescript(_SCHEMA)
 
-EXTRA_ALIASES = {
-    "Vitamin B12":                ["vitamin b 12", "vitamin b12"],
-    "Vitamin D (25-OH)":          ["vitamin d (25-oh)", "25 hydroxy (oh) vit d", "25-oh vitamin d",
-                                   "vitamin d", "25 oh vitamin d"],
-    "Folic Acid":                 ["folic acid", "folate", "folic acid (serum)"],
-    "Copper":                     ["copper"],
-    "Urea (Serum)":               ["urea - serum", "urea", "blood urea", "blood urea nitrogen", "bun"],
-    "Creatinine (Serum)":         ["creatinine - serum", "creatinine", "serum creatinine"],
-    "Uric Acid":                  ["uric acid", "serum uric acid"],
-    "Glucose (Fasting)":          ["glucose (fasting)", "glucose fasting (plasma-f,hexokinase)",
-                                   "glucose fasting", "fasting blood sugar", "fbs", "fasting glucose",
-                                   "blood glucose fasting"],
-    "Glucose (Post Prandial 2hr)":["pp glucose", "post prandial glucose", "pbg",
-                                   "glucose post prandial", "pp blood sugar",
-                                   "2hr pp glucose", "2 hr pp glucose"],
-    "HbA1c":                      ["hb a1c", "hba1c- glycated haemoglobin",
-                                   "hba1c- glycated haemoglobin (hplc)", "glycated haemoglobin",
-                                   "hba1c- glycated haemoglobin, blood by hplc method",
-                                   "glycohaemoglobin", "glycosylated haemoglobin"],
-    "Total Cholesterol":          ["total cholesterol", "cholesterol total", "cholesterol"],
-    "HDL Cholesterol":            ["hdl cholesterol", "hdl-c", "hdl", "high density lipoprotein"],
-    "LDL Cholesterol":            ["ldl cholesterol", "ldl-c", "ldl", "low density lipoprotein"],
-    "Triglycerides":              ["triglycerides", "tg", "trigs", "triglyceride"],
-    "VLDL Cholesterol":           ["vldl cholesterol", "vldl-c", "vldl", "very low density lipoprotein"],
-    "Non HDL Cholesterol":        ["non hdl cholesterol", "non-hdl cholesterol", "non hdl-c",
-                                   "non hdl", "non-hdl"],
-    "APO Lipoprotein A1":         ["apo lipoprotein a1", "apo a1", "apolipoprotein a1"],
-    "APO Lipoprotein B":          ["apo lipoprotein b", "apolipoproteins b", "apo b", "apolipoprotein b"],
-    "Lipoprotein(a)":             ["lipoprotein a ( lp a)", "lipoprotein(a)", "lp(a)", "lipoprotein a"],
-    "Testosterone (Total)":       ["testosterone (total)", "testosterone", "total testosterone"],
-    "Free Testosterone":          ["free testosterone", "testosterone free"],
-    "DHEA Sulphate":              ["dhea sulphate", "dheas", "dhea-s", "dehydroepiandrosterone sulphate"],
-    "DHEA":                       ["dhea", "dehydroepiandrosterone"],
-    "TSH":                        ["tsh 3rd generation (hs tsh)", "tsh (hs tsh)", "hs tsh",
-                                   "tsh 3rd generation", "tsh- 3rd generation (hs tsh)", "tsh"],
-    "Free T3":                    ["free t3", "free t 3", "ft3", "free  t3"],
-    "Free T4":                    ["free t4", "free t 4", "ft4", "free  t4"],
-    "LH":                         ["lh", "luteinizing hormone", "luteinising hormone"],
-    "FSH":                        ["fsh", "follicle stimulating hormone"],
-    "Prolactin":                  ["prolactin"],
-    "Estradiol":                  ["estradiol", "oestradiol", "e2"],
-    "Progesterone":               ["progesterone"],
-    "Cortisol (AM)":              ["cortisol ( am)", "cortisol (am)", "cortisol"],
-    "Growth Hormone":             ["growth hormone", "gh", "hgh"],
-    "IGF-I":                      ["igf - i", "igf i", "igf-1", "igf1", "igf i (somatomedin c)"],
-    "AST (SGOT)":                 ["s.g.o.t. (ast)", "sgot (ast)", "sgot", "ast",
-                                   "aspartate aminotransferase"],
-    "ALT (SGPT)":                 ["s.g.p.t. (alt)", "sgpt (alt)", "sgpt", "alt",
-                                   "alanine aminotransferase"],
-    "Alkaline Phosphatase":       ["alkaline phosphatase", "alp", "alk phosphatase"],
-    "Gamma GT":                   ["gamma gt ( ggtp)", "gamma gt (ggtp)", "ggt", "ggtp",
-                                   "gamma glutamyl transferase", "gamma glutamyl transpeptidase",
-                                   "gamma-glutamyl transferase"],
-    "Bilirubin (Total)":          ["bilirubin - total", "bilirubin total", "total bilirubin"],
-    "Bilirubin (Direct)":         ["bilirubin - direct", "bilirubin direct", "direct bilirubin"],
-    "Bilirubin (Indirect)":       ["bilirubin - indirect", "bilirubin indirect", "indirect bilirubin"],
-    "Total Protein":              ["total proteins", "total protein"],
-    "Albumin":                    ["albumin", "serum albumin"],
-    "Globulin":                   ["globulin", "total globulin"],
-    "A/G Ratio":                  ["a/g ratio", "albumin globulin ratio", "ag ratio"],
-    "Haemoglobin":                ["haemoglobin", "hemoglobin", "hb", "hgb",
-                                   "haemoglobin (hb)", "hemoglobin (hb)"],
-    "Haematocrit":                ["haematocrit", "hematocrit", "pcv", "packed cell volume"],
-    "Total RBC Count":            ["total rbc count", "rbc count", "rbc", "red blood cell count",
-                                   "red cell count", "erythrocyte count"],
-    "Total WBC Count":            ["total wbc count", "wbc count", "wbc", "total leucocyte count",
-                                   "tlc", "leukocyte count", "white blood cell count",
-                                   "total white blood cell count"],
-    "Platelet Count":             ["platelet count", "platelets", "plt",
-                                   "thrombocyte count", "platelet"],
-    "MCV":                        ["mcv", "mean corpuscular volume", "mean cell volume",
-                                   "mean corpuscular volume (mcv)"],
-    "MCH":                        ["mch", "mean corpuscular hemoglobin",
-                                   "mean corpuscular haemoglobin", "mean cell hemoglobin",
-                                   "(mch) mean corpuscular haemoglobin",
-                                   "(mch) mean corpuscular hemoglobin",
-                                   "mch mean corpuscular haemoglobin"],
-    "MCHC":                       ["mchc", "mean corpuscular hemoglobin concentration",
-                                   "mean cell hemoglobin concentration",
-                                   "(mchc) mean corpuscular haemoglobin concentration",
-                                   "mchc mean corpuscular haemoglobin concentration"],
-    "RDW-CV":                     ["rdw-cv", "rdw cv", "rdw", "red cell distribution width",
-                                   "rdw - cv", "red blood cell distribution width"],
-    "Neutrophil":                 ["neutrophil", "neutrophils", "neutrophil %",
-                                   "neutrophils %", "polymorphonuclears", "pmn"],
-    "Lymphocyte":                 ["lymphocyte", "lymphocytes", "lymphocyte %", "lymphocytes %"],
-    "Monocyte":                   ["monocyte", "monocytes", "monocyte %", "monocytes %"],
-    "Eosinophil":                 ["eosinophil", "eosinophils", "eosinophil %", "eosinophils %"],
-    "Basophil":                   ["basophil", "basophils", "basophil %", "basophils %"],
-    "Absolute Neutrophil Count":  ["absolute neutrophil count", "abs. neutrophil count",
-                                   "abs neutrophil count", "absolute neutrophils", "anc",
-                                   "neutrophil - absolute", "neutrophils absolute",
-                                   "absolute neutrophil count (anc)"],
-    "Absolute Lymphocyte Count":  ["absolute lymphocyte count", "abs. lymphocyte count",
-                                   "abs lymphocyte count", "absolute lymphocytes", "alc",
-                                   "lymphocyte - absolute", "lymphocytes absolute",
-                                   "absolute lymphocyte count (alc)"],
-    "Absolute Monocyte Count":    ["absolute monocyte count", "abs. monocyte count",
-                                   "abs monocyte count", "absolute monocytes", "amc",
-                                   "monocyte - absolute", "monocytes absolute",
-                                   "absolute monocyte count (amc)"],
-    "Absolute Eosinophil Count":  ["absolute eosinophil count", "abs. eosinophil count",
-                                   "abs eosinophil count", "absolute eosinophils", "aec",
-                                   "eosinophil - absolute", "eosinophils absolute",
-                                   "absolute eosinophil count (aec)"],
-    "Absolute Basophil Count":    ["absolute basophil count", "abs. basophil count",
-                                   "abs basophil count", "absolute basophils", "abc",
-                                   "basophil - absolute", "basophils absolute",
-                                   "absolute basophil count (abc)"],
-    "ESR":                        ["esr", "erythrocyte sedimentation rate", "sedimentation rate"],
-    "hsCRP":                      ["hscrp", "hs-crp", "hs crp", "c reactive protein (hs)",
-                                   "high sensitivity crp", "high sensitivity c reactive protein"],
-    "C Reactive Protein":         ["c reactive protein", "crp", "c reactive protein (crp)"],
-    "Anti-Sperm Antibody":        ["anti sperm antibody", "anti-sperm antibody"],
-    "Dengue NS1 Antigen":         ["dengue ns1 antigen", "dengue ns1", "ns1 antigen"],
-}
 
-UNIT_CONVERSIONS = {
-    ("ng/ml", "ng/dl"): 10.0,
-    ("ng/dl", "ng/ml"): 0.1,
-    ("µg/dl", "µg/ml"): 0.01,
-    ("µg/ml", "µg/dl"): 100.0,
-}
+_init_db()
+
+
+# =============================================================================
+# BIOMARKER DICTIONARY  —  clinical zones, canonical units, categories
+# =============================================================================
 
 _UNIT_MAP = {
     "mg/dl": "mg/dL", "mg/l": "mg/L",
@@ -392,716 +133,353 @@ _UNIT_MAP = {
     "10^6/ul": "10^6/µL", "10^6/µl": "10^6/µL",
     "10^3/ul": "10^3/µL", "10^3/µl": "10^3/µL",
     "mmol/l": "mmol/L", "umol/l": "µmol/L", "nmol/l": "nmol/L",
-    "fl": "fL", "pg": "pg",
-    "mu/100ul": "mU/100uL", "mu/ml": "mU/mL",
-    "%": "%",
+    "fl": "fL", "pg": "pg", "%": "%",
 }
 
-_UNIT_RE = (
-    r'(mg\/dl|mg\/l|pg\/ml|pg\/dl|ng\/ml|ng\/dl'
-    r'|ug\/dl|microgm\/dl|microgm\/ml'
-    r'|u\/l|iu\/l|miu\/l|miu\/ml|uiu\/ml|\xb5iu\/ml|\xb5iu\/l'
-    r'|gm\/dl|g\/dl'
-    r'|10\^6\/\xb5l|10\^3\/\xb5l|10\^6\/ul|10\^3\/ul'
-    r'|mmol\/l|umol\/l|nmol\/l'
-    r'|mu\/100ul|mu\/ml'
-    r'|fl|\xb5g\/dl|\xb5g\/ml|%)'
-)
+UNIT_CONVERSIONS = {
+    ("ng/ml", "ng/dl"): 10.0,
+    ("ng/dl", "ng/ml"): 0.1,
+    ("µg/dl", "µg/ml"): 0.01,
+    ("µg/ml", "µg/dl"): 100.0,
+}
 
-_DATE_FMTS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%m/%d/%Y", "%d/%m/%y"]
+_DATE_FMTS = [
+    "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
+    "%m/%d/%Y", "%d/%m/%y", "%B %d, %Y", "%b %d, %Y",
+    "%d %B %Y", "%d %b %Y",
+]
 
 
-# ─────────────────────────────────────────────
-# DICTIONARY
-# ─────────────────────────────────────────────
+def normalize_unit(unit: str) -> str:
+    raw = str(unit).strip()
+    low = raw.lower().replace(" ", "")
+    return _UNIT_MAP.get(low, raw)
 
-def load_dictionary(path):
-    df = pd.read_csv(path, encoding="latin1")
+
+def _safe_float(v):
+    try:
+        f = float(v)
+        return None if (f != f) else f   # NaN check
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_dictionary(path: Path) -> dict:
+    """
+    Returns {canonical_name: {unit, category, sex_rows[], zone range floats,
+                               short_description, interpretation_summary}}
+    """
+    try:
+        df = pd.read_csv(path, encoding="latin1")
+    except FileNotFoundError:
+        return {}
+
     biomarkers = {}
-    alias_map  = {}
     for _, row in df.iterrows():
-        canonical = row["canonical_name"].strip()
-        if canonical not in biomarkers:
-            biomarkers[canonical] = {"unit": str(row["unit"]).strip(), "sex_rows": []}
-        biomarkers[canonical]["sex_rows"].append({
-            "sex":          str(row["sex"]).strip().lower(),
-            "normal_range": str(row["normal_range"]).strip(),
-        })
-        if pd.notna(row["aliases"]):
-            for alias in str(row["aliases"]).split(","):
-                a = alias.strip().lower()
-                if a and a not in alias_map:
-                    alias_map[a] = canonical
-    for canonical, aliases in EXTRA_ALIASES.items():
-        if canonical not in biomarkers:
+        canonical = str(row.get("canonical_name", "")).strip()
+        if not canonical or canonical == "nan":
             continue
-        for alias in aliases:
-            a = alias.strip().lower()
-            if a not in alias_map:
-                alias_map[a] = canonical
-    all_aliases = sorted(alias_map.keys(), key=len, reverse=True)
-    return biomarkers, alias_map, all_aliases
+        if canonical not in biomarkers:
+            biomarkers[canonical] = {
+                "unit":                   str(row.get("unit", "")).strip(),
+                "category":               str(row.get("category", "")).strip(),
+                "short_description":      str(row.get("short_description", "")),
+                "interpretation_summary": str(row.get("interpretation_summary", "")),
+                "sex_rows":               [],
+                "optimal_min":   _safe_float(row.get("optimal_min")),
+                "optimal_max":   _safe_float(row.get("optimal_max")),
+                "high_risk_min": _safe_float(row.get("high_risk_min")),
+                "high_risk_max": _safe_float(row.get("high_risk_max")),
+                "diseased_min":  _safe_float(row.get("diseased_min")),
+                "diseased_max":  _safe_float(row.get("diseased_max")),
+                "normal_min":    _safe_float(row.get("normal_min")),
+                "normal_max":    _safe_float(row.get("normal_max")),
+            }
+        biomarkers[canonical]["sex_rows"].append({
+            "sex":          str(row.get("sex", "both")).strip().lower(),
+            "normal_range": str(row.get("normal_range", "")).strip(),
+        })
+    return biomarkers
 
 
-BIOMARKERS, _ALIAS_MAP, _ALL_ALIASES = load_dictionary(DICT_PATH)
+# Loaded once at import — ~131 entries, negligible memory
+BIOMARKERS: dict = _load_dictionary(DICT_PATH)
+
+# Sorted canonical names embedded verbatim in the LLM prompt
+_CANONICAL_LIST: str = "\n".join(f"  - {n}" for n in sorted(BIOMARKERS))
 
 
-# ─────────────────────────────────────────────
-# STATUS FLAGGING
-# ─────────────────────────────────────────────
+# -- Status / zone classification ---------------------------------------------
 
-def _parse_range(s):
+def _parse_range(s: str) -> tuple:
+    """Parse '4.0-11.0', '<200', '>=3.5' into (low, high) floats."""
     s = str(s).strip()
-    if not s or s == "nan":
+    if not s or s in ("nan", "none", "None", ""):
         return None, None
-    m = re.match(r'^(\d+\.?\d*)\s*-\s*(\d+\.?\d*)$', s)
+    m = re.match(r"^(\d+\.?\d*)\s*[-\u2013]\s*(\d+\.?\d*)$", s)
     if m:
         return float(m.group(1)), float(m.group(2))
     if s.startswith(">="):  return float(s[2:]), None
     if s.startswith("<="):  return None, float(s[2:])
-    if s.startswith(">"):   return float(s[1:]), None
-    if s.startswith("<"):   return None, float(s[1:])
+    if s.startswith(">"):   return float(s[1:]),  None
+    if s.startswith("<"):   return None,  float(s[1:])
     return None, None
 
 
-def _convert_value(value, from_unit, to_unit):
-    key = (from_unit.lower(), to_unit.lower())
+def _convert(value: float, from_unit: str, to_unit: str) -> float:
+    key = (from_unit.lower().strip(), to_unit.lower().strip())
     factor = UNIT_CONVERSIONS.get(key)
     return value * factor if factor else value
 
 
-def flag_status(canonical, value, extracted_unit, gender=""):
-    bm = BIOMARKERS.get(canonical)
-    if not bm:
-        return "—"
-    g = gender.upper()
-    matched = None
-    for sr in bm["sex_rows"]:
-        if sr["sex"] == "both":
-            matched = sr
-        elif (sr["sex"] == "male" and g == "M") or (sr["sex"] == "female" and g == "F"):
-            matched = sr
-            break
-    if not matched:
-        return "—"
-    ref_unit      = bm["unit"]
-    compare_value = _convert_value(value, extracted_unit, ref_unit)
-    low, high     = _parse_range(matched["normal_range"])
-    if low  is not None and compare_value < low:  return "LOW ⬇"
-    if high is not None and compare_value > high: return "HIGH ⬆"
-    return "Normal"
-
-
-def normalize_unit(unit: str, lab_unit_fixes: dict = None) -> str:
-    raw = str(unit).strip()
-    low = raw.lower().replace(" ", "")
-    if lab_unit_fixes:
-        for k, v in lab_unit_fixes.items():
-            if low == k.lower().replace(" ", ""):
-                return v
-    return _UNIT_MAP.get(low, raw)
-
-
-# ─────────────────────────────────────────────
-# PROFILE-AWARE METADATA EXTRACTION
-# ─────────────────────────────────────────────
-
-def _try_patterns(text: str, patterns: list) -> str | None:
-    for pattern in patterns:
-        try:
-            m = re.search(pattern, text, re.I)
-            if m:
-                return m.group(1).strip()
-        except re.error:
-            pass
-    return None
-
-
-def _extract_kauvery_age_gender(text: str) -> tuple:
+def flag_status(test_name: str, value: float, unit: str,
+                gender: str = "", reference_range: str = "") -> str:
     """
-    Dedicated extractor for Kauvery's 'Age / Gender : 39/Years/Male' line.
-    Returns (age_int_or_None, gender_str_or_empty).
-    Handles all real-world pdfplumber output variants including:
-      - spaces/slashes between tokens
-      - Years/Yrs optional
-      - Male/Female or M/F
-      - merged columns (trailing Report Date text)
-      - non-breaking spaces and unicode variants
+    For known tests: use curated normal ranges (sex-specific when available).
+    For unknown tests: use the lab's own reference_range string.
+    Returns: 'Normal' | 'HIGH ⬆' | 'LOW ⬇' | '—'
     """
-    age   = None
-    gender = ""
-
-    # Normalise: replace unicode spaces/colons to ASCII
-    clean = text.replace("\xa0", " ").replace("\uff1a", ":").replace("|", "/")
-
-    # Strategy 1: structured Age/Gender line
-    # Matches: "Age / Gender : 39/Years/Male" with any whitespace/slash variation
-    age_gender_line = re.search(
-        r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d{1,3})\s*/?\s*(?:Years?|Yrs?)?\s*/?\s*(Male|Female|M|F)\b",
-        clean, re.I
-    )
-    if age_gender_line:
-        try:
-            age = int(age_gender_line.group(1))
-        except (ValueError, TypeError):
-            pass
-        g = age_gender_line.group(2).upper()
-        gender = "M" if g in ("M", "MALE") else "F" if g in ("F", "FEMALE") else ""
-        return age, gender
-
-    # Strategy 2: age only from Age/Gender line (gender on next scan)
-    age_only = re.search(
-        r"Age\s*/\s*(?:Gender|Sex)\s*[:\-]\s*(\d{1,3})",
-        clean, re.I
-    )
-    if age_only:
-        try:
-            age = int(age_only.group(1))
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback age: "Age : 39" standalone
-    if age is None:
-        m = re.search(r"\bAge\s*[:\-]\s*(\d{1,3})\b", clean, re.I)
-        if m:
-            try:
-                age = int(m.group(1))
-            except (ValueError, TypeError):
-                pass
-
-    # Strategy 3: gender from any clear indicator in the text
-    for pat in [
-        r"(?:Gender|Sex)\s*[:\-]\s*(Male|Female|M|F)\b",
-        r"/\s*(Male|Female)\b",
-        r"\b(Male|Female)\b",
-        r"\b([MF])\s*/\s*\d",   # "M/39" format (reversed)
-    ]:
-        m = re.search(pat, clean, re.I)
-        if m:
-            g = m.group(1).upper()
-            gender = "M" if g in ("M", "MALE") else "F" if g in ("F", "FEMALE") else ""
-            if gender:
+    bm = BIOMARKERS.get(test_name)
+    if bm:
+        g = gender.upper()
+        matched = None
+        for sr in bm["sex_rows"]:
+            if sr["sex"] == "both":
+                matched = sr
+            elif (sr["sex"] == "male" and g == "M") or (sr["sex"] == "female" and g == "F"):
+                matched = sr
                 break
+        if not matched and bm["sex_rows"]:
+            matched = bm["sex_rows"][0]
+        if matched:
+            val = _convert(value, unit, bm["unit"])
+            lo, hi = _parse_range(matched["normal_range"])
+            if lo is not None and val < lo: return "LOW ⬇"
+            if hi is not None and val > hi: return "HIGH ⬆"
+            return "Normal"
 
-    return age, gender
+    # Fallback: lab's own reference range
+    if reference_range and str(reference_range).strip() not in ("", "nan", "None", "—"):
+        lo, hi = _parse_range(reference_range)
+        if lo is not None and value < lo: return "LOW ⬇"
+        if hi is not None and value > hi: return "HIGH ⬆"
+        if lo is not None or hi is not None:
+            return "Normal"
+    return "—"
 
 
-def _parse_date(date_str: str, fmts: list) -> str:
-    date_part = re.split(r'\s+\d{1,2}:\d{2}', date_str)[0].strip()
-    for fmt in fmts:
+# =============================================================================
+# LLM EXTRACTION  —  Claude Haiku, single call per PDF
+# =============================================================================
+
+_SYSTEM_PROMPT = f"""You are a medical data extraction specialist. Extract all structured data from lab report text.
+
+Return ONLY a single JSON object — no markdown, no explanation:
+{{
+  "patient_name": "full name as printed, or null",
+  "age": integer or null,
+  "gender": "M" or "F" or null,
+  "report_date": "date exactly as printed e.g. 19/01/2026, or null",
+  "lab_name": "laboratory name or null",
+  "tests": [
+    {{
+      "name": "test name exactly as printed",
+      "canonical_name": "best match from the preferred list below, or null if no match",
+      "value": numeric value as a JSON number (never a string),
+      "unit": "unit as printed, or empty string",
+      "reference_range": "reference range as printed e.g. 4.0-11.0 or <200, or null"
+    }}
+  ]
+}}
+
+Preferred canonical test names (use these when the test matches):
+{_CANONICAL_LIST}
+
+Rules:
+- Extract EVERY test that has a numeric value — do not skip any
+- value must be a JSON number, never a string ("5.2" is wrong, 5.2 is correct)
+- If value is printed as "<0.1" use 0.1; if ">500" use 500
+- canonical_name: choose the closest preferred name, or null if nothing fits
+- report_date: return exactly as printed, do NOT reformat to YYYY-MM-DD
+- Do not invent values — only extract what is literally in the text"""
+
+
+def _call_haiku(raw_text: str, api_key: str) -> dict:
+    """
+    Call Claude Haiku. Returns parsed JSON dict or {"error": "..."}.
+    """
+    client = anthropic.Anthropic(api_key=api_key)
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            system=_SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": f"Extract all data from this lab report:\n\n{raw_text[:14000]}"
+            }],
+        )
+        text = msg.content[0].text.strip()
+        # Strip accidental markdown fences
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.M)
+        text = re.sub(r"\s*```\s*$",       "", text, flags=re.M)
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        return {"error": f"JSON parse failed: {e}"}
+    except anthropic.APIError as e:
+        return {"error": f"API error: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================================================================
+# VALIDATION  —  regex sanity-check on LLM output
+# =============================================================================
+
+_DATE_TIME_STRIP = re.compile(r"\s+\d{1,2}:\d{2}.*$")
+
+
+def _parse_date(raw) -> str:
+    """Normalise any date string to YYYY-MM-DD. Returns '' on failure."""
+    if not raw or str(raw).strip().lower() in ("null", "none", "nan", ""):
+        return ""
+    s = _DATE_TIME_STRIP.sub("", str(raw).strip()).strip()
+    for fmt in _DATE_FMTS:
         try:
-            return datetime.strptime(date_part, fmt).strftime("%Y-%m-%d")
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except ValueError:
             continue
     return ""
 
 
-def extract_metadata(text: str, profile: dict = None) -> dict:
+def _validate_gender(raw) -> str:
+    s = str(raw or "").strip().upper()
+    if s in ("M", "MALE"):   return "M"
+    if s in ("F", "FEMALE"): return "F"
+    return ""
+
+
+def _validate_value(v):
+    """Accept finite numbers in a physiologically plausible range."""
+    f = _safe_float(v)
+    if f is None:            return None
+    if f < 0 or f > 1_000_000: return None
+    return f
+
+
+def _validate_canonical(name: str) -> str:
+    """Accept only names actually in our dictionary."""
+    if not name or str(name).lower() in ("null", "none", "nan", ""):
+        return ""
+    return name if name in BIOMARKERS else ""
+
+
+def validate_llm_output(llm: dict) -> tuple:
     """
-    Extract patient metadata using lab-specific profile patterns.
-    Handles Kauvery, HiTech, Metropolis and generic formats.
-    Returns dict: name, gender, date, age, phone, lab_id.
-
-    For Kauvery reports: uses dedicated _extract_kauvery_age_gender()
-    which handles all real-world pdfplumber output variants.
+    Clean and validate LLM JSON output.
+    Returns (cleaned_dict, list_of_warning_strings).
     """
-    if profile is None:
-        lab_id  = detect_lab(text)
-        profile = _load_profile(lab_id)
+    warnings = []
+    out = {}
 
-    lab_id = profile.get("lab_id", "generic")
-    meta = {
-        "name": "", "gender": "", "date": "",
-        "age": None, "phone": "",
-        "lab_id": lab_id,
-    }
-    pats = profile.get("metadata_patterns", {})
+    raw_name = str(llm.get("patient_name") or "").strip()
+    raw_name = re.sub(r"\b(Mr|Mrs|Ms|Dr|Miss)\.?\s*", "", raw_name, flags=re.I)
+    out["patient_name"] = re.sub(r"\s+", " ", raw_name).strip().upper() or "UNKNOWN"
 
-    # ── Name ──────────────────────────────────────────────────────────
-    raw_name = _try_patterns(text, pats.get("name", []))
-    if raw_name:
-        raw_name = re.sub(r'\b(Mr|Mrs|Ms|Dr|Miss)\.?\s*', '', raw_name, flags=re.I)
-        raw_name = re.sub(r'\b[A-Z]\d+\b', '', raw_name)
-        meta["name"] = re.sub(r'\s+', ' ', raw_name).strip().upper()
-
-    # ── Age + Gender ───────────────────────────────────────────────────
-    # For Kauvery: use the dedicated extractor which handles all variants.
-    # For other labs: use profile patterns, then fall back to Kauvery extractor.
-    if lab_id == "kauvery":
-        kauv_age, kauv_gender = _extract_kauvery_age_gender(text)
-        if kauv_age is not None:
-            meta["age"] = kauv_age
-        if kauv_gender:
-            meta["gender"] = kauv_gender
-    else:
-        raw_age = _try_patterns(text, pats.get("age", []))
-        if raw_age:
-            try:
-                meta["age"] = int(raw_age)
-            except ValueError:
-                pass
-
-        raw_gender = _try_patterns(text, pats.get("gender", []))
-        if raw_gender:
-            val = raw_gender.strip().upper()
-            if val in ("MALE", "M"):
-                meta["gender"] = "M"
-            elif val in ("FEMALE", "F"):
-                meta["gender"] = "F"
-
-    # If age/gender still missing, try the Kauvery extractor as universal fallback
-    if meta["age"] is None or not meta["gender"]:
-        fb_age, fb_gender = _extract_kauvery_age_gender(text)
-        if meta["age"] is None and fb_age is not None:
-            meta["age"] = fb_age
-        if not meta["gender"] and fb_gender:
-            meta["gender"] = fb_gender
-
-    # ── Date ──────────────────────────────────────────────────────────
-    raw_date = _try_patterns(text, pats.get("date", []))
-    if raw_date:
-        meta["date"] = _parse_date(raw_date, profile.get("date_formats", _DATE_FMTS))
-
-    # ── Phone (same across all labs) ──────────────────────────────────
-    m = re.search(r"(?:Tel|Ph|Phone|Mobile)\s*(?:No\.?)?\s*[:\-]?\s*\+?(\d[\d\s\-]{9,})", text, re.I)
-    if m:
-        digits = re.sub(r'\D', '', m.group(1))
-        meta["phone"] = digits[-10:] if len(digits) >= 10 else digits
-
-    return meta
-
-
-# ─────────────────────────────────────────────
-# STRUCTURED TABLE EXTRACTION  (Kauvery-style)
-# ─────────────────────────────────────────────
-
-def _clean_test_name(raw: str, transforms: list) -> str:
-    s = raw.strip()
-    for pattern, replacement in transforms:
-        s = re.sub(pattern, replacement, s, flags=re.I).strip()
-    return s
-
-
-def _match_alias(test_name_raw: str) -> str | None:
-    lower = test_name_raw.lower().strip()
-    if lower in _ALIAS_MAP:
-        return _ALIAS_MAP[lower]
-    for alias in _ALL_ALIASES:
-        if alias in lower:
-            return _ALIAS_MAP[alias]
-    return None
-
-
-_TABLE_SKIP = re.compile(
-    r'\b(reference range|investigation name|result|method|interpretation|'
-    r'sample collected|validated by|approved by|end of report|please correlate|'
-    r'printed on|page \d|haematology|clinical chemistry|serology|biochemistry|'
-    r'urine analysis|microbiology|cbc|complete blood count)\b',
-    re.I
-)
-
-
-def extract_from_table(pages_text: list, profile: dict, gender: str = "") -> list:
-    """
-    Extract biomarkers from structured lab table columns (Kauvery-style).
-    Lines look like: "Haemoglobin (Hb)         14.2       g/dL    13.0-17.0"
-    """
-    results    = []
-    seen       = set()
-    transforms = profile.get("test_name_transforms", [])
-    unit_fixes = profile.get("unit_fixes", {})
-
-    unit_pat = re.compile(
-        r'(10\^[36]/[µu]L?|g/dL|g/dl|fL|fl|pg|%|U/L|u/l|'
-        r'mmol/L|mmol/l|mg/dL|mg/dl|mg/L|mg/l|'
-        r'mIU/L|miu/l|µIU/mL|IU/L|iu/l|ng/mL|ng/ml|ng/dL|ng/dl|'
-        r'µg/dL|µg/mL|10\^6/µL|10\^3/µL|10\^6/ul|10\^3/ul)',
-        re.I
-    )
-
-    for page_text in pages_text:
-        lines = [l.strip() for l in page_text.split("\n") if l.strip()]
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            if _TABLE_SKIP.search(line):
-                i += 1
-                continue
-
-            # Match: <test name><2+ spaces><number><optional spaces><unit>
-            result_match = re.search(r'\s{2,}([<>]?\s*\d+(?:\.\d+)?)\s{0,6}', line)
-            if result_match:
-                raw_val = result_match.group(1).replace(" ", "").lstrip("<>")
-                try:
-                    value = float(raw_val)
-                except ValueError:
-                    i += 1
-                    continue
-
-                if not (0 < value < 1_000_000):
-                    i += 1
-                    continue
-
-                # Unit: look immediately after the number
-                rest      = line[result_match.end():]
-                unit_m    = unit_pat.match(rest.strip().split()[0] if rest.strip() else "")
-                raw_unit  = unit_m.group(0) if unit_m else ""
-                unit      = normalize_unit(raw_unit, unit_fixes)
-
-                test_part     = line[:result_match.start()].strip()
-                test_name_raw = _clean_test_name(test_part, transforms)
-                canonical     = _match_alias(test_name_raw)
-
-                if canonical and canonical not in seen:
-                    seen.add(canonical)
-                    results.append({
-                        "test_name": canonical,
-                        "value":     value,
-                        "unit":      unit,
-                        "status":    flag_status(canonical, value, unit, gender),
-                    })
-                i += 1
-                continue
-
-            # No inline number — check next line for standalone value
-            if i + 1 < len(lines):
-                next_line = lines[i + 1]
-                num_m = re.match(r'^([<>]?\s*\d+(?:\.\d+)?)\s*([\w\^/µ%]*)$', next_line)
-                if num_m and not _TABLE_SKIP.search(next_line):
-                    raw_val  = num_m.group(1).replace(" ", "").lstrip("<>")
-                    raw_unit = num_m.group(2) or ""
-                    try:
-                        value = float(raw_val)
-                    except ValueError:
-                        i += 1
-                        continue
-                    if 0 < value < 1_000_000:
-                        test_name_raw = _clean_test_name(line, transforms)
-                        unit          = normalize_unit(raw_unit, unit_fixes)
-                        canonical     = _match_alias(test_name_raw)
-                        if canonical and canonical not in seen:
-                            seen.add(canonical)
-                            results.append({
-                                "test_name": canonical,
-                                "value":     value,
-                                "unit":      unit,
-                                "status":    flag_status(canonical, value, unit, gender),
-                            })
-                    i += 2
-                    continue
-
-            i += 1
-    return results
-
-
-# ─────────────────────────────────────────────
-# FREE-TEXT EXTRACTION  (UNCHANGED from v4)
-# ─────────────────────────────────────────────
-
-def find_value_in_text(text, pos):
-    snippet = text[pos: pos + 100]
-    snippet = re.sub(r'\(cid:\d+\)', '', snippet)
-    m = re.search(
-        r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)' + r'\s*' + _UNIT_RE,
-        snippet, re.IGNORECASE
-    )
-    if not m:
-        m = re.search(r'[:\|\s]*([<>]?\s*\d+(?:\.\d+)?)', snippet, re.IGNORECASE)
-        if not m:
-            return None
-        raw_val  = m.group(1).replace(" ", "").lstrip("<>")
-        raw_unit = ""
-    else:
-        raw_val  = m.group(1).replace(" ", "").lstrip("<>")
-        raw_unit = m.group(2) or ""
+    out["age"] = None
     try:
-        value = float(raw_val)
-    except ValueError:
-        return None
-    if not (0 < value < 1_000_000):
-        return None
-    return value, normalize_unit(raw_unit)
+        age = int(llm.get("age") or 0)
+        if 0 < age < 130:
+            out["age"] = age
+    except (TypeError, ValueError):
+        pass
 
+    out["gender"]      = _validate_gender(llm.get("gender"))
+    out["report_date"] = _parse_date(llm.get("report_date"))
+    out["lab_name"]    = str(llm.get("lab_name") or "").strip()
 
-def extract_biomarkers(text, gender="", lab_unit_fixes: dict = None):
-    """Original free-text alias-based extraction — UNCHANGED from v4."""
-    results, seen = [], set()
-    lines = text.split("\n")
-    for i, line in enumerate(lines):
-        clean = re.sub(r'\s+', ' ', line).strip()
-        if not clean:
+    if not out["report_date"]:
+        warnings.append("Report date could not be parsed — please verify")
+
+    validated = []
+    seen_names = set()
+
+    for t in (llm.get("tests") or []):
+        name = str(t.get("name") or "").strip()
+        if not name:
             continue
-        if re.search(r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:)\b', clean, re.I):
+
+        val = _validate_value(t.get("value"))
+        if val is None:
+            warnings.append(
+                f"Skipped '{name}': value '{t.get('value')}' is not a valid number"
+            )
             continue
-        lower = clean.lower()
-        for alias in _ALL_ALIASES:
-            canonical = _ALIAS_MAP[alias]
-            if canonical in seen:
-                continue
-            pattern = re.compile(r'(?<!\w)' + re.escape(alias) + r'(?!\w)', re.IGNORECASE)
-            match   = pattern.search(lower)
-            if not match:
-                continue
-            found = find_value_in_text(clean, match.end())
-            if not found:
-                for lookahead in range(1, 3):
-                    if i + lookahead < len(lines):
-                        next_line = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
-                        if re.search(r'\b(upto|less than|more than|deficient|normal\s*:|method\s*:|specimen\s*:)\b', next_line, re.I):
-                            continue
-                        found = find_value_in_text(next_line, 0)
-                        if found:
-                            break
-            if found and not found[1]:
-                for lookahead in range(1, 3):
-                    if i + lookahead < len(lines):
-                        unit_line  = re.sub(r'\s+', ' ', lines[i + lookahead]).strip()
-                        unit_match = re.match(r'^' + _UNIT_RE + r'$', unit_line, re.I)
-                        if unit_match:
-                            found = (found[0], normalize_unit(unit_match.group(1), lab_unit_fixes))
-                            break
-            if not found:
-                continue
-            value, unit = found
-            ref_unit    = BIOMARKERS.get(canonical, {}).get("unit", "")
-            used_unit   = unit if unit else ref_unit
-            seen.add(canonical)
-            results.append({
-                "test_name": canonical,
-                "value":     value,
-                "unit":      used_unit,
-                "status":    flag_status(canonical, value, used_unit, gender),
-            })
-            break
-    return results
+
+        canonical  = _validate_canonical(str(t.get("canonical_name") or ""))
+        store_name = canonical or name          # de-dup key and storage name
+        if store_name in seen_names:
+            continue
+        seen_names.add(store_name)
+
+        unit = normalize_unit(str(t.get("unit") or ""))
+        ref  = str(t.get("reference_range") or "").strip()
+        if ref.lower() in ("none", "null", "nan", ""):
+            ref = ""
+
+        validated.append({
+            "name":            name,        # raw as printed in PDF
+            "canonical_name":  canonical,   # matched to dict, or ""
+            "store_name":      store_name,  # what is saved as test_name
+            "value":           val,
+            "unit":            unit,
+            "reference_range": ref,
+        })
+
+    if not validated:
+        warnings.append("No valid numeric test results found in extraction")
+
+    out["tests"] = validated
+    return out, warnings
 
 
-# ─────────────────────────────────────────────
-# PROCESSING & STORAGE
-# ─────────────────────────────────────────────
+# =============================================================================
+# PATIENT ID  —  deterministic, collision-resistant
+# =============================================================================
 
-def process_pdf(pdf_path, verbose=False):
+def _clean_name(name: str) -> str:
+    name = re.sub(r"\b(Mr|Mrs|Ms|Dr|Miss)\.?\s*", "", name, flags=re.I)
+    return re.sub(r"\s+", " ", name).strip().upper()
+
+
+def make_patient_id(name: str, gender: str, birth_year, phone: str = "") -> str:
     """
-    Extract biomarkers + metadata from a PDF lab report.
-    Returns (DataFrame, raw_text).
-
-    1. pdfplumber — collect per-page text.
-    2. OCR fallback if < 80 words  [UNCHANGED from v4].
-    3. Detect lab → load profile.
-    4. Profile-aware metadata extraction.
-    5. Table-mode extraction first (Kauvery), then free-text for anything missed.
-    6. Accumulate unit strings into profile JSON for future reports.
+    Deterministic SHA-256 patient ID.
+    Priority: full name + gender > first name + phone > first name + birth decade
     """
-    pdf_path = Path(pdf_path)
+    clean  = _clean_name(name)
+    words  = [w for w in clean.split() if len(w) >= 2]
+    g      = gender.upper() if gender else "U"
+    digits = re.sub(r"\D", "", phone or "")[-10:]
 
-    pages_text = []
-    full_text  = ""
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
-            pages_text.append(t)
-            full_text += t + "\n"
-
-    ocr_used = False
-
-    # ── OCR fallback — UNCHANGED FROM v4 ──────────────────────────────────
-    if _OCR_AVAILABLE and len(full_text.split()) < 80:
-        try:
-            images    = _pdf2img(str(pdf_path), dpi=300)
-            ocr_pages = [_tess.image_to_string(img, config="--psm 6") for img in images]
-            ocr_text  = "\n".join(ocr_pages)
-            if len(ocr_text.split()) > len(full_text.split()):
-                full_text  = ocr_text
-                pages_text = ocr_pages
-                ocr_used   = True
-        except Exception:
-            pass
-
-    lab_id  = detect_lab(full_text)
-    profile = _load_profile(lab_id)
-
-    if verbose:
-        print(f"  Lab detected: {lab_id}")
-
-    meta = extract_metadata(full_text, profile=profile)
-    pid  = make_patient_id(meta)
-
-    seen_canonical: set = set()
-    results: list = []
-
-    if profile.get("table_structure", {}).get("has_table"):
-        for r in extract_from_table(pages_text, profile, gender=meta.get("gender", "")):
-            seen_canonical.add(r["test_name"])
-            results.append(r)
-
-    for r in extract_biomarkers(
-        full_text,
-        gender=meta.get("gender", ""),
-        lab_unit_fixes=profile.get("unit_fixes", {}),
-    ):
-        if r["test_name"] not in seen_canonical:
-            seen_canonical.add(r["test_name"])
-            results.append(r)
-
-    if verbose:
-        mode = " [OCR]" if ocr_used else ""
-        print(f"  {pdf_path.name}{mode}: {len(results)} tests | {meta.get('name','?')} | {meta.get('date','?')}")
-
-    if not results:
-        return pd.DataFrame(), full_text
-
-    df = pd.DataFrame(results)
-    df["patient_id"]    = pid
-    df["patient_name"]  = meta["name"]
-    df["gender"]        = meta.get("gender", "")
-    df["age_at_test"]   = meta.get("age", "")
-    df["report_date"]   = meta["date"]
-    df["source_file"]   = pdf_path.name
-    df["file_hash"]     = file_hash(pdf_path)
-    df["ocr_extracted"] = ocr_used
-    df["lab_id"]        = lab_id
-
-    if meta.get("age") and meta.get("date"):
-        try:
-            df["birth_year"] = int(meta["date"][:4]) - int(meta["age"])
-        except (ValueError, TypeError):
-            df["birth_year"] = None
+    if len(words) >= 2:
+        key = f"FULL|{'_'.join(words)}|{g}"
+    elif words and len(digits) >= 8:
+        key = f"PHONE|{words[0]}|{g}|{digits}"
+    elif words and birth_year:
+        decade = str((int(birth_year) % 100 // 10) * 10)
+        key = f"FIRST|{words[0]}|{g}|{decade}"
+    elif words:
+        key = f"FIRST|{words[0]}|{g}|XX"
     else:
-        df["birth_year"] = None
+        key = f"UNK|{hashlib.md5(name.encode()).hexdigest()[:8]}"
 
-    # Accumulate unit strings for this lab
-    unit_fixes = profile.get("unit_fixes", {})
-    for _, row in df.iterrows():
-        raw_unit = str(row.get("unit", "")).strip()
-        key = raw_unit.lower().replace(" ", "")
-        if raw_unit and key not in unit_fixes:
-            unit_fixes[key] = raw_unit
-    profile["unit_fixes"] = unit_fixes
-    _save_profile(lab_id, profile)
-
-    return df, full_text
+    return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
 
 
-def save_report(df: pd.DataFrame) -> None:
-    if df.empty:
-        return
-    path = STORE_DIR / f"{df['patient_id'].iloc[0]}.csv"
-    if path.exists():
-        existing      = pd.read_csv(path)
-        existing_name = str(existing["patient_name"].iloc[0]) if not existing.empty else ""
-        new_name      = str(df["patient_name"].iloc[0])
-        if len(new_name) > len(existing_name):
-            existing["patient_name"] = new_name
-        df = pd.concat([existing, df], ignore_index=True)
-    df.drop_duplicates(subset=["test_name", "report_date"], keep="first", inplace=True)
-    df.sort_values(["test_name", "report_date"]).to_csv(path, index=False)
-
-
-def load_history(patient_id: str) -> pd.DataFrame:
-    path = STORE_DIR / f"{patient_id}.csv"
-    if not path.exists():
-        return pd.DataFrame()
-    df = pd.read_csv(path)
-    df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
-    if "birth_year" in df.columns:
-        birth_years = pd.to_numeric(df["birth_year"], errors="coerce").dropna()
-        if not birth_years.empty:
-            birth_year = int(birth_years.min())
-            df["current_age"] = datetime.now().year - birth_year
-        else:
-            df["current_age"] = df.get("age_at_test", None)
-    else:
-        df["current_age"] = df.get("age_at_test", None)
-    return df
-
-
-# ─────────────────────────────────────────────
-# DELETE
-# ─────────────────────────────────────────────
-
-def delete_patient(patient_id: str) -> bool:
-    path = STORE_DIR / f"{patient_id}.csv"
-    if path.exists():
-        path.unlink()
-        return True
-    return False
-
-
-def delete_report_by_date(patient_id: str, report_date: str) -> bool:
-    path = STORE_DIR / f"{patient_id}.csv"
-    if not path.exists():
-        return False
-    df = pd.read_csv(path)
-    before = len(df)
-    df = df[df["report_date"].astype(str).str[:10] != str(report_date)[:10]]
-    if len(df) == before:
-        return False
-    if df.empty:
-        path.unlink()
-    else:
-        df.to_csv(path, index=False)
-    return True
-
-
-# ─────────────────────────────────────────────
-# PATIENT MANAGEMENT
-# ─────────────────────────────────────────────
-
-def rename_patient(patient_id: str, new_name: str) -> bool:
-    path = STORE_DIR / f"{patient_id}.csv"
-    if not path.exists():
-        return False
-    df = pd.read_csv(path)
-    df["patient_name"] = new_name.strip().upper()
-    df.to_csv(path, index=False)
-    return True
-
-
-def merge_into_patient(source_id: str, target_id: str) -> bool:
-    src_path = STORE_DIR / f"{source_id}.csv"
-    tgt_path = STORE_DIR / f"{target_id}.csv"
-    if not src_path.exists() or not tgt_path.exists():
-        return False
-    try:
-        src = pd.read_csv(src_path)
-        tgt = pd.read_csv(tgt_path)
-        src["patient_id"]   = target_id
-        src["patient_name"] = tgt["patient_name"].iloc[0]
-        merged = pd.concat([tgt, src], ignore_index=True)
-        merged.drop_duplicates(subset=["test_name", "report_date"], keep="first", inplace=True)
-        merged.sort_values(["test_name", "report_date"]).to_csv(tgt_path, index=False)
-        src_path.unlink()
-        return True
-    except Exception:
-        return False
-
-
-def patch_record(patient_id: str, report_date: str, test_name: str,
-                 new_value: float, new_unit: str = "") -> bool:
-    path = STORE_DIR / f"{patient_id}.csv"
-    if not path.exists():
-        return False
-    df = pd.read_csv(path)
-    mask = (
-        (df["report_date"].astype(str).str[:10] == str(report_date)[:10]) &
-        (df["test_name"] == test_name)
-    )
-    if not mask.any():
-        return False
-    df.loc[mask, "value"] = new_value
-    if new_unit:
-        df.loc[mask, "unit"] = new_unit
-    for idx in df[mask].index:
-        gender = str(df.at[idx, "gender"]) if "gender" in df.columns else ""
-        unit   = str(df.at[idx, "unit"])
-        df.at[idx, "status"] = flag_status(test_name, new_value, unit, gender)
-    df.to_csv(path, index=False)
-    return True
-
-
-# ─────────────────────────────────────────────
-# DUPLICATE DETECTION
-# ─────────────────────────────────────────────
+# =============================================================================
+# DEDUPLICATION
+# =============================================================================
 
 def file_hash(path: Path) -> str:
     h = hashlib.sha256()
@@ -1113,72 +491,318 @@ def file_hash(path: Path) -> str:
 
 def is_duplicate_file(path: Path) -> bool:
     fh = file_hash(path)
-    for csv_file in STORE_DIR.glob("*.csv"):
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM biomarker_records WHERE file_hash = ? LIMIT 1", (fh,)
+        ).fetchone()
+    return row is not None
+
+
+# =============================================================================
+# MAIN PIPELINE
+# =============================================================================
+
+def process_pdf(pdf_path, api_key: str, verbose: bool = False) -> tuple:
+    """
+    Full pipeline: PDF → validated DataFrame + raw text.
+    Returns (df, raw_text). df is empty on any failure.
+
+    DataFrame columns (same shape as v5, so app.py UI is unchanged):
+      patient_id, patient_name, gender, age_at_test, birth_year, report_date,
+      test_name, raw_test_name, canonical_name, value, unit, reference_range,
+      status, category, lab_name, source_file, file_hash, ocr_extracted
+    """
+    pdf_path = Path(pdf_path)
+
+    # Step 1: pdfplumber
+    pages_text = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            t = page.extract_text(x_tolerance=2, y_tolerance=2) or ""
+            pages_text.append(t)
+    full_text = "\n".join(pages_text)
+
+    # Step 2: OCR fallback (unchanged from v5)
+    ocr_used = False
+    if _OCR_AVAILABLE and len(full_text.split()) < 80:
         try:
-            df = pd.read_csv(csv_file)
-            if "file_hash" in df.columns and fh in df["file_hash"].values:
-                return True
+            images    = _pdf2img(str(pdf_path), dpi=300)
+            ocr_pages = [_tess.image_to_string(img, config="--psm 6") for img in images]
+            ocr_text  = "\n".join(ocr_pages)
+            if len(ocr_text.split()) > len(full_text.split()):
+                full_text = ocr_text
+                ocr_used  = True
         except Exception:
-            continue
-    return False
+            pass
+
+    if verbose:
+        mode = "[OCR]" if ocr_used else "[pdfplumber]"
+        print(f"  {pdf_path.name}: {len(full_text.split())} words {mode}")
+
+    # Step 3: LLM extraction
+    llm_raw = _call_haiku(full_text, api_key)
+    if "error" in llm_raw:
+        if verbose:
+            print(f"  LLM error: {llm_raw['error']}")
+        return pd.DataFrame(), full_text
+
+    # Step 4: Validate
+    data, warnings = validate_llm_output(llm_raw)
+    if verbose:
+        for w in warnings:
+            print(f"    warning: {w}")
+
+    if not data["tests"]:
+        return pd.DataFrame(), full_text
+
+    # Step 5: Enrich with dictionary + compute status
+    fh          = file_hash(pdf_path)
+    report_date = data["report_date"]
+    gender      = data["gender"]
+    age         = data["age"]
+    birth_year  = (int(report_date[:4]) - age) if (age and report_date) else None
+    pid         = make_patient_id(data["patient_name"], gender, birth_year)
+
+    rows = []
+    for t in data["tests"]:
+        canonical = t["canonical_name"]
+        bm        = BIOMARKERS.get(canonical) if canonical else None
+        unit      = bm["unit"] if (bm and bm["unit"]) else t["unit"]
+        category  = bm["category"] if bm else ""
+
+        status = flag_status(
+            canonical or t["store_name"],
+            t["value"], t["unit"],
+            gender=gender,
+            reference_range=t["reference_range"],
+        )
+
+        rows.append({
+            "patient_id":      pid,
+            "patient_name":    data["patient_name"],
+            "gender":          gender,
+            "age_at_test":     age,
+            "birth_year":      birth_year,
+            "report_date":     report_date,
+            "test_name":       t["store_name"],
+            "raw_test_name":   t["name"],
+            "canonical_name":  canonical,
+            "value":           t["value"],
+            "unit":            unit,
+            "reference_range": t["reference_range"],
+            "status":          status,
+            "category":        category,
+            "lab_name":        data["lab_name"],
+            "source_file":     pdf_path.name,
+            "file_hash":       fh,
+            "ocr_extracted":   ocr_used,
+        })
+
+    if verbose:
+        known = sum(1 for r in rows if r["canonical_name"])
+        print(f"  -> {len(rows)} tests ({known} in dict, {len(rows)-known} uncategorised)"
+              f" | {data['patient_name']} | {report_date}")
+
+    return pd.DataFrame(rows), full_text
 
 
-# ─────────────────────────────────────────────
-# PATIENT ID
-# ─────────────────────────────────────────────
+# =============================================================================
+# STORAGE  —  SQLite upsert
+# =============================================================================
 
-def _clean_name(name: str) -> str:
-    name = re.sub(r'\b(Mr|Mrs|Ms|Dr|Miss)\.?\s*', '', name, flags=re.I)
-    name = re.sub(r'\b[A-Z]\d+\b', '', name)
-    return re.sub(r'\s+', ' ', name).strip().upper()
+def save_report(df: pd.DataFrame) -> None:
+    """Upsert patient metadata and insert biomarker records. Ignores exact duplicates."""
+    if df.empty:
+        return
+    r0  = df.iloc[0]
+    pid = str(r0["patient_id"])
+
+    with _db() as conn:
+        existing = conn.execute(
+            "SELECT patient_name FROM patients WHERE patient_id = ?", (pid,)
+        ).fetchone()
+        new_name = str(r0.get("patient_name", "UNKNOWN"))
+
+        if existing is None:
+            conn.execute(
+                "INSERT INTO patients(patient_id, patient_name, gender, birth_year, phone)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (pid, new_name,
+                 str(r0.get("gender", "")),
+                 r0.get("birth_year"),
+                 str(r0.get("phone", "")))
+            )
+        elif len(new_name) > len(existing["patient_name"]):
+            # Longer extracted name is usually more complete
+            conn.execute(
+                "UPDATE patients SET patient_name = ? WHERE patient_id = ?",
+                (new_name, pid)
+            )
+
+        for _, row in df.iterrows():
+            conn.execute("""
+                INSERT OR IGNORE INTO biomarker_records
+                  (patient_id, report_date, test_name, raw_test_name, canonical_name,
+                   value, unit, reference_range, status, category,
+                   lab_name, source_file, file_hash, ocr_extracted, age_at_test)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                pid,
+                str(row.get("report_date", "")),
+                str(row.get("test_name", "")),
+                str(row.get("raw_test_name", "")),
+                str(row.get("canonical_name") or ""),
+                float(row["value"]),
+                str(row.get("unit", "")),
+                str(row.get("reference_range", "")),
+                str(row.get("status", "")),
+                str(row.get("category", "")),
+                str(row.get("lab_name", "")),
+                str(row.get("source_file", "")),
+                str(row.get("file_hash", "")),
+                int(bool(row.get("ocr_extracted", False))),
+                row.get("age_at_test"),
+            ))
 
 
-def make_patient_id(meta: dict) -> str:
-    gender = meta.get("gender", "").upper()
-    name   = _clean_name(meta.get("name", ""))
-    phone  = re.sub(r"\D", "", meta.get("phone", ""))[-10:]
-    age    = meta.get("age")
-    real_words = [w for w in name.split() if len(w) >= 2]
-    if len(real_words) >= 2:
-        key = f"FULLNAME|{'_'.join(real_words)}|{gender}"
-        return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
-    first = real_words[0] if real_words else "UNKNOWN"
-    existing_pid = _lookup_existing_pid(first, gender, phone)
-    if existing_pid:
-        return existing_pid
-    if phone and len(phone) >= 8:
-        key = f"TRUNCATED|{first}|{gender}|{phone}"
-        return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
-    decade = str((age // 10) * 10) if age else "XX"
-    key    = f"FIRST|{first}|{gender}|{decade}"
-    return "P" + hashlib.sha256(key.encode()).hexdigest()[:8].upper()
+# =============================================================================
+# READ
+# =============================================================================
+
+def load_history(patient_id: str) -> pd.DataFrame:
+    """Load all records for a patient as a DataFrame (report_date as datetime)."""
+    with _db() as conn:
+        patient = conn.execute(
+            "SELECT * FROM patients WHERE patient_id = ?", (patient_id,)
+        ).fetchone()
+        rows = conn.execute(
+            "SELECT * FROM biomarker_records WHERE patient_id = ?"
+            " ORDER BY report_date, test_name",
+            (patient_id,)
+        ).fetchall()
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame([dict(r) for r in rows])
+    df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+
+    if patient:
+        df["patient_name"] = patient["patient_name"]
+        df["gender"]       = patient["gender"]
+        by = patient["birth_year"]
+        df["current_age"]  = (
+            (datetime.now().year - int(by))
+            if by else df.get("age_at_test", pd.Series(dtype="object"))
+        )
+
+    return df
 
 
-def _lookup_existing_pid(first_name: str, gender: str, phone: str) -> str | None:
-    if not STORE_DIR.exists():
-        return None
-    for csv_file in STORE_DIR.glob("*.csv"):
-        try:
-            df = pd.read_csv(csv_file, nrows=1)
-            if df.empty:
-                continue
-            stored_name   = _clean_name(str(df["patient_name"].iloc[0]))
-            stored_gender = str(df.get("gender", pd.Series([""])).iloc[0]).upper()
-            if stored_gender != gender:
-                continue
-            stored_first = stored_name.split()[0] if stored_name.split() else ""
-            if stored_first != first_name.upper():
-                continue
-            if len(first_name) >= 4:
-                return csv_file.stem
-        except Exception:
-            continue
-    return None
+def list_patients() -> list:
+    """Single SQL query — O(1) regardless of patient count."""
+    with _db() as conn:
+        rows = conn.execute("""
+            SELECT p.patient_id,
+                   p.patient_name,
+                   p.gender,
+                   COUNT(DISTINCT b.report_date) AS n_reports,
+                   MAX(b.report_date)             AS last_report
+            FROM   patients p
+            LEFT JOIN biomarker_records b USING(patient_id)
+            GROUP  BY p.patient_id
+            ORDER  BY p.patient_name
+        """).fetchall()
+    return [dict(r) for r in rows]
 
 
-# ─────────────────────────────────────────────
-# TRENDS & TIMESERIES
-# ─────────────────────────────────────────────
+# =============================================================================
+# PATIENT MANAGEMENT
+# =============================================================================
+
+def delete_patient(patient_id: str) -> bool:
+    with _db() as conn:
+        conn.execute("DELETE FROM biomarker_records WHERE patient_id = ?", (patient_id,))
+        n = conn.execute(
+            "DELETE FROM patients WHERE patient_id = ?", (patient_id,)
+        ).rowcount
+    return n > 0
+
+
+def delete_report_by_date(patient_id: str, report_date: str) -> bool:
+    date_str = str(report_date)[:10]
+    with _db() as conn:
+        n = conn.execute(
+            "DELETE FROM biomarker_records WHERE patient_id = ? AND report_date = ?",
+            (patient_id, date_str)
+        ).rowcount
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM biomarker_records WHERE patient_id = ?",
+            (patient_id,)
+        ).fetchone()[0]
+        if remaining == 0:
+            conn.execute("DELETE FROM patients WHERE patient_id = ?", (patient_id,))
+    return n > 0
+
+
+def rename_patient(patient_id: str, new_name: str) -> bool:
+    with _db() as conn:
+        n = conn.execute(
+            "UPDATE patients SET patient_name = ? WHERE patient_id = ?",
+            (new_name.strip().upper(), patient_id)
+        ).rowcount
+    return n > 0
+
+
+def merge_into_patient(source_id: str, target_id: str) -> bool:
+    """Move all source records to target, delete source patient."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE OR IGNORE biomarker_records SET patient_id = ? WHERE patient_id = ?",
+            (target_id, source_id)
+        )
+        # Remaining records couldn't move due to UNIQUE conflicts — delete them
+        conn.execute(
+            "DELETE FROM biomarker_records WHERE patient_id = ?", (source_id,)
+        )
+        conn.execute("DELETE FROM patients WHERE patient_id = ?", (source_id,))
+    return True
+
+
+def patch_record(patient_id: str, report_date: str, test_name: str,
+                 new_value: float = None, new_unit: str = None) -> bool:
+    """Manually correct a value/unit and recompute status."""
+    date_str = str(report_date)[:10]
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM biomarker_records"
+            " WHERE patient_id = ? AND report_date = ? AND test_name = ?",
+            (patient_id, date_str, test_name)
+        ).fetchone()
+        if not row:
+            return False
+        row = dict(row)
+        p   = conn.execute(
+            "SELECT gender FROM patients WHERE patient_id = ?", (patient_id,)
+        ).fetchone()
+        g    = p["gender"] if p else ""
+        val  = new_value if new_value is not None else row["value"]
+        unit = new_unit  if new_unit  is not None else row["unit"]
+        status = flag_status(
+            row.get("canonical_name") or test_name, val, unit,
+            gender=g, reference_range=row.get("reference_range", "")
+        )
+        conn.execute(
+            "UPDATE biomarker_records SET value = ?, unit = ?, status = ?"
+            " WHERE patient_id = ? AND report_date = ? AND test_name = ?",
+            (val, unit, status, patient_id, date_str, test_name)
+        )
+    return True
+
+
+# =============================================================================
+# ANALYTICS
+# =============================================================================
 
 def generate_trends(history: pd.DataFrame) -> pd.DataFrame:
     rows = []
@@ -1204,9 +828,10 @@ def generate_trends(history: pd.DataFrame) -> pd.DataFrame:
             "n_reports":     len(group),
         })
     if not rows:
-        return pd.DataFrame(columns=["test_name", "first_date", "first_value",
-                                     "latest_date", "latest_value", "unit",
-                                     "change_%", "trend", "latest_status", "n_reports"])
+        return pd.DataFrame(columns=[
+            "test_name", "first_date", "first_value", "latest_date",
+            "latest_value", "unit", "change_%", "trend", "latest_status", "n_reports"
+        ])
     return pd.DataFrame(rows).sort_values("change_%", key=abs, ascending=False)
 
 
@@ -1218,25 +843,3 @@ def get_test_timeseries(history: pd.DataFrame, test_name: str) -> pd.DataFrame:
           .copy())
     df["report_date"] = pd.to_datetime(df["report_date"])
     return df
-
-
-# ─────────────────────────────────────────────
-# PATIENT LIST
-# ─────────────────────────────────────────────
-
-def list_patients():
-    records = []
-    for csv_file in STORE_DIR.glob("*.csv"):
-        try:
-            df = pd.read_csv(csv_file)
-            if df.empty:
-                continue
-            records.append({
-                "patient_id":   csv_file.stem,
-                "patient_name": df["patient_name"].iloc[0],
-                "gender":       df["gender"].iloc[0] if "gender" in df.columns else "",
-                "n_reports":    df["report_date"].nunique() if "report_date" in df.columns else 1,
-            })
-        except Exception:
-            continue
-    return records

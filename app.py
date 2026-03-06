@@ -1,24 +1,18 @@
 """
-Longitudinal Biomarker Intelligence Platform — v5
+Longitudinal Biomarker Intelligence Platform — v6
 Streamlit Web App
 
-Changes in v5:
-  - Unified colour palette (green/amber/red semantic zones) via CSS variables
-  - Chart reference bands: green = normal, red = high zone, amber = low zone
-  - Educational callouts rendered as styled cards, not plain captions
-  - Summary grid: 4 cards (total / ok / out-of-range / critical) + progress bar
-  - Results table: CRITICAL → HIGH → LOW → normal sort order
-  - Trends table: date-centric with column_config number formatting
-  - clean_unit() helper sanitises µ corruption and NaN in one place
-  - bm_lookup() wraps dictionary access so render functions stay clean
-  - os import moved to top-level (was re-imported on every page render)
-  - _get_api_key() cached so it is not re-read on every Streamlit rerun
+Phase 1 architecture:
+  PDF → pdfplumber/OCR → Claude Haiku extraction → regex validation
+  → dictionary zone lookup → SQLite storage
 
-Fixes in v5.1:
-  - Removed duplicate st.download_button in Patient Profiles tab1
-    (caused StreamlitDuplicateElementId crash that blocked Trends charts)
-  - Fixed expander icon "keyboard_double_arrow_right" text appearing on hover
-    by loading Material Symbols font + hiding the SVG sibling span correctly
+Changes from v5:
+  - LLM-first extraction: Claude Haiku extracts ALL tests + metadata in one call
+  - No regex alias scanning, no lab profiles, no per-lab hacks
+  - SQLite replaces per-patient CSV files
+  - bm_lookup() now reads from lab_extractor.BIOMARKERS dict directly
+  - LLM Review page simplified: extraction is already correct, no audit loop
+  - Pending reviews retained for manual corrections only
 """
 
 import os
@@ -34,11 +28,9 @@ from lab_extractor import (
     process_pdf, save_report, load_history, generate_trends,
     get_test_timeseries, list_patients, is_duplicate_file,
     delete_patient, delete_report_by_date, rename_patient,
-    merge_into_patient, patch_record, STORE_DIR,
+    merge_into_patient, patch_record, STORE_DIR, BIOMARKERS,
 )
 from llm_verifier import (
-    verify_with_llm, build_diff, apply_corrections,
-    get_metadata_corrections,
     save_pending_review, load_pending_reviews, delete_pending_review,
 )
 
@@ -315,16 +307,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def _parse_range(s):
-    if pd.isna(s):
+    """Parse range string to (low, high) floats. Used in render functions."""
+    if s is None or (hasattr(s, '__class__') and s.__class__.__name__ == 'float' and s != s):
         return None, None
     s = str(s).strip()
-    if not s or s.lower() == "nan":
+    if not s or s.lower() in ("nan", "none", ""):
         return None, None
     try:
         if s.startswith("<="):  return None, float(s[2:])
         if s.startswith("<"):   return None, float(s[1:])
         if s.startswith(">="):  return float(s[2:]), None
-        if s.startswith(">"):   return float(s[1:]), None
+        if s.startswith(">"):   return float(s[1:]),  None
         for sep in ["\u2013", "-"]:
             if sep in s:
                 a, b = s.split(sep, 1)
@@ -335,96 +328,15 @@ def _parse_range(s):
         return None, None
 
 
-@st.cache_data
-def load_biomarker_dictionary():
-    for path in ["data/Biomarker_dictionary_csv.csv", "Biomarker_dictionary_csv.csv"]:
-        try:
-            df = pd.read_csv(path, encoding="latin1")
-            break
-        except FileNotFoundError:
-            continue
-    else:
-        return pd.DataFrame()
-
-    if "canonical_name" not in df.columns:
-        return pd.DataFrame()
-
-    for src_col, (mn, mx) in {
-        "normal_range":    ("normal_min",    "normal_max"),
-        "optimal_range":   ("optimal_min",   "optimal_max"),
-        "high_risk_range": ("high_risk_min", "high_risk_max"),
-        "diseased_range":  ("diseased_min",  "diseased_max"),
-    }.items():
-        if src_col in df.columns:
-            parsed = df[src_col].apply(lambda x: pd.Series(_parse_range(x), index=[mn, mx]))
-            df[mn], df[mx] = parsed[mn], parsed[mx]
-        else:
-            df[mn] = df[mx] = None
-
-    for col in ["short_description", "interpretation_summary", "category",
-                "related_conditions", "common_panels"]:
-        if col not in df.columns:
-            df[col] = None
-
-    return df.set_index("canonical_name")
-
-
-biomarker_dictionary = load_biomarker_dictionary()
-
-
-@st.cache_data
-def _build_alias_index() -> dict:
-    idx = {}
-    if biomarker_dictionary.empty:
-        return idx
-
-    for canonical in biomarker_dictionary.index:
-        idx[canonical.lower().strip()] = canonical
-        row = biomarker_dictionary.loc[canonical]
-        if isinstance(row, pd.DataFrame):
-            row = row.iloc[0]
-        aliases_raw = row.get("aliases", "")
-        if pd.notna(aliases_raw) and str(aliases_raw).strip():
-            for a in str(aliases_raw).split(","):
-                a = a.strip().lower()
-                if a:
-                    idx[a] = canonical
-
-    # Aliases are fully defined in Biomarker_dictionary_csv.csv
-    return idx
-
-
 def bm_lookup(test_name: str) -> dict:
-    if biomarker_dictionary.empty:
-        return {}
-    if test_name in biomarker_dictionary.index:
-        row = biomarker_dictionary.loc[test_name]
-        if isinstance(row, pd.DataFrame):
-            row = row.iloc[0]
-        return row.to_dict()
-    alias_idx = _build_alias_index()
-    key = test_name.lower().strip()
-    canonical = alias_idx.get(key)
-    if canonical and canonical in biomarker_dictionary.index:
-        row = biomarker_dictionary.loc[canonical]
-        if isinstance(row, pd.DataFrame):
-            row = row.iloc[0]
-        return row.to_dict()
-    key_clean = key.replace("(", "").replace(")", "").replace(".", "").replace("-", " ")
-    for canonical in biomarker_dictionary.index:
-        c_clean = canonical.lower().replace("(", "").replace(")", "").replace(".", "").replace("-", " ")
-        if key_clean == c_clean:
-            row = biomarker_dictionary.loc[canonical]
-            if isinstance(row, pd.DataFrame):
-                row = row.iloc[0]
-            return row.to_dict()
-    for canonical in biomarker_dictionary.index:
-        c_lower = canonical.lower()
-        if key in c_lower or c_lower in key:
-            row = biomarker_dictionary.loc[canonical]
-            if isinstance(row, pd.DataFrame):
-                row = row.iloc[0]
-            return row.to_dict()
+    """
+    Return the dictionary entry for a test name.
+    Since LLM already maps to canonical names, direct lookup is almost always a hit.
+    """
+    bm = BIOMARKERS.get(test_name)
+    if bm:
+        return bm
+    # Loose fallback for any uncategorised tests returned by LLM
     return {}
 
 
@@ -1864,7 +1776,14 @@ with st.sidebar:
         <div style="margin-top:1.5rem;padding:10px 12px;background:{LIGHT};
              border:1px solid {BORDER};border-left:3px solid {ACCENT};
              border-radius:10px;font-size:0.72rem;color:{MUTED}">
-          🤖 Claude verification active
+          🤖 Claude Haiku extraction active
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="margin-top:1.5rem;padding:10px 12px;background:#fff5f5;
+             border:1px solid #fca5a5;border-left:3px solid #ef4444;
+             border-radius:10px;font-size:0.72rem;color:#dc2626">
+          ⚠️ No API key — uploads disabled
         </div>""", unsafe_allow_html=True)
 
 
@@ -1886,10 +1805,13 @@ st.markdown("""
 if page == "Upload Reports":
     st.markdown('<div class="section-label">Upload Lab Reports</div>', unsafe_allow_html=True)
 
-    if llm_enabled:
-        st.caption("🤖 Claude verification enabled — all values will be audited after extraction.")
+    if not llm_enabled:
+        st.error(
+            "⚠️ **API key required.** Add `ANTHROPIC_API_KEY` to Streamlit secrets.  "
+            "Claude Haiku extracts all data — no API key means no processing."
+        )
     else:
-        st.caption("⚪ LLM off — add ANTHROPIC_API_KEY to Streamlit secrets to enable Claude auditing.")
+        st.caption("🤖 Claude Haiku will extract all tests, metadata and classify results.")
 
     uploaded_files = st.file_uploader(
         "Drop PDF lab reports here",
@@ -1898,83 +1820,52 @@ if page == "Upload Reports":
         label_visibility="collapsed",
     )
 
-    if uploaded_files and st.button("⟳  Process Reports", type="primary"):
-        progress           = st.progress(0)
+    if uploaded_files and llm_enabled and st.button("⟳  Process Reports", type="primary"):
+        progress            = st.progress(0)
         results_by_patient: dict = {}
 
         for i, uf in enumerate(uploaded_files):
             tmp_path = _make_tmp(uf.read())
+            label    = f"**{uf.name}**"
 
             if is_duplicate_file(tmp_path):
-                st.warning(f"⏭️ **{uf.name}** — already processed, skipping.")
+                st.warning(f"⏭️ {label} — already processed, skipping.")
                 progress.progress((i + 1) / len(uploaded_files))
                 continue
 
-            df, raw_text = process_pdf(tmp_path, verbose=False)
+            with st.spinner(f"🤖 Claude is reading {uf.name}…"):
+                df, raw_text = process_pdf(tmp_path, api_key=api_key, verbose=False)
 
             if df.empty:
-                st.warning(f"⚠️ **{uf.name}** — no data could be extracted.")
+                st.warning(
+                    f"⚠️ {label} — extraction failed. "
+                    "Check the PDF is text-based (not a scanned image without OCR support)."
+                )
                 progress.progress((i + 1) / len(uploaded_files))
                 continue
 
-            extracted_date = str(df["report_date"].iloc[0]) if not df.empty else ""
-            if not extracted_date or extracted_date in ("", "nan", "NaT", "None"):
-                st.warning(
-                    f"⚠️ **{uf.name}** — report date could not be detected automatically. "
-                    "Please check the source PDF."
-                )
+            report_date = str(df["report_date"].iloc[0]) if not df.empty else ""
+            ocr_used    = bool(df["ocr_extracted"].iloc[0])
+            pid         = df["patient_id"].iloc[0]
+            name        = df["patient_name"].iloc[0]
+            n_tests     = len(df)
+            known       = df["canonical_name"].notna().sum()
+            unknown     = n_tests - known
 
-            ocr_used = bool(df.get("ocr_extracted", pd.Series([False])).iloc[0])
-            pid      = df["patient_id"].iloc[0]
-            name     = df["patient_name"].iloc[0]
+            save_report(df)
 
-            if llm_enabled:
-                with st.spinner(f"🤖 Claude is auditing {uf.name}…"):
-                    llm_result = verify_with_llm(raw_text, df, api_key=api_key)
+            # Success message with extraction summary
+            parts = [f"{n_tests} tests extracted"]
+            if known:    parts.append(f"{known} classified")
+            if unknown:  parts.append(f"{unknown} uncategorised")
+            if not report_date or report_date in ("", "nan", "NaT", "None"):
+                st.warning(f"⚠️ {label} — date not detected. Please check the PDF.")
+                parts.append("⚠️ date missing")
 
-                if llm_result.get("error"):
-                    st.warning(f"⚠️ LLM check failed for **{uf.name}**: {llm_result['error']}")
-                    save_report(df)
-                else:
-                    diff        = build_diff(df, llm_result)
-                    meta_corr   = get_metadata_corrections(df, llm_result)
-                    meta_issues = meta_corr.get("metadata_issues", [])
-
-                    if meta_corr.get("date_correction"):
-                        df["report_date"] = meta_corr["date_correction"]
-                        st.caption(
-                            f"📅 Date found by Claude ({meta_corr.get('date_source','')}) → "
-                            f"**{meta_corr['date_correction']}**"
-                        )
-                        meta_corr["date_correction"] = None
-
-                    needs_review = diff[diff["needs_review"]] if not diff.empty else pd.DataFrame()
-                    n_flags      = len(needs_review)
-                    has_meta     = bool(
-                        meta_corr.get("date_correction") or
-                        meta_corr.get("name_correction") or meta_issues
-                    )
-
-                    if n_flags == 0 and not has_meta:
-                        st.success(f"✓ **{uf.name}** — {len(df)} tests · {name} · 🤖 all confirmed")
-                        df["llm_verified"] = True
-                        save_report(df)
-                    else:
-                        save_report(df)
-                        save_pending_review(pid, df["report_date"].iloc[0],
-                                            diff, raw_text, meta_corr)
-                        parts = []
-                        if n_flags:     parts.append(f"{n_flags} flag(s)")
-                        if meta_issues: parts.append(f"{len(meta_issues)} metadata issue(s)")
-                        if has_meta:    parts.append("metadata correction(s)")
-                        st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
-                        st.warning(f"🔍 **{', '.join(parts)} need review** — see LLM Review.")
-            else:
-                save_report(df)
-                st.success(f"✓ **{uf.name}** — {len(df)} tests · {name}")
+            st.success(f"✓ {label} — {name} · {' · '.join(parts)}")
 
             if ocr_used:
-                st.caption("📷 OCR was used — please verify hormone/thyroid values against the original PDF.")
+                st.caption("📷 OCR was used — verify hormone/thyroid values against the original.")
 
             results_by_patient.setdefault(pid, []).append(df)
             progress.progress((i + 1) / len(uploaded_files))
@@ -1989,7 +1880,10 @@ if page == "Upload Reports":
                 with tab1:
                     snapshot = get_snapshot(history)
                     render_radial_overview(snapshot, filter_status="all")
-                    st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<hr style="border:none;border-top:1px solid {BORDER};margin:0.75rem 0">',
+                        unsafe_allow_html=True
+                    )
                     render_results_table(snapshot, table_key=f"upload_{pid}")
                     st.download_button(
                         "↓ Export CSV",
@@ -2009,9 +1903,8 @@ if page == "Upload Reports":
           <div style="font-size:1.05rem;font-weight:600;color:{TEXT};margin-bottom:0.5rem">
             Drop PDF lab reports to begin</div>
           <div style="font-size:0.82rem;color:{MUTED}">
-            Supports Hitech, Kauvery, Metropolis and similar Indian labs.</div>
+            Supports any Indian or international lab format — Claude reads them all.</div>
         </div>""", unsafe_allow_html=True)
-
 
 # ═══════════════════════════════════════════════
 # PAGE: PATIENT PROFILES
@@ -2400,264 +2293,35 @@ elif page == "Patient Profiles":
 # ═══════════════════════════════════════════════
 
 elif page == "LLM Review":
-    st.markdown('<div class="section-label">LLM Verification Review</div>', unsafe_allow_html=True)
-
-    # ── Button colour overrides — Accept=green, Reject=red ────────────────────
-    st.markdown("""
-    <style>
-    /* ── LLM Review: Accept buttons — green background, white text ── */
-    /* Must override the global .stButton primary rule (ACCENT colour) */
-    section[data-testid="stMain"] button[kind="primary"] {
-        background-color: #16a34a !important;
-        border-color: #15803d !important;
-        color: #ffffff !important;
-        font-weight: 700 !important;
-    }
-    section[data-testid="stMain"] button[kind="primary"] p,
-    section[data-testid="stMain"] button[kind="primary"] span {
-        color: #ffffff !important;
-        font-weight: 700 !important;
-    }
-    section[data-testid="stMain"] button[kind="primary"]:hover {
-        background-color: #15803d !important;
-        border-color: #166534 !important;
-    }
-    /* ── LLM Review: Reject buttons — white/light-red, red text ── */
-    section[data-testid="stMain"] button[kind="secondary"] {
-        background-color: #fff5f5 !important;
-        border: 1.5px solid #fca5a5 !important;
-        color: #dc2626 !important;
-        font-weight: 700 !important;
-    }
-    section[data-testid="stMain"] button[kind="secondary"] p,
-    section[data-testid="stMain"] button[kind="secondary"] span {
-        color: #dc2626 !important;
-        font-weight: 700 !important;
-    }
-    section[data-testid="stMain"] button[kind="secondary"]:hover {
-        background-color: #fee2e2 !important;
-        border-color: #ef4444 !important;
-    }
-    section[data-testid="stMain"] button[kind="secondary"]:hover p,
-    section[data-testid="stMain"] button[kind="secondary"]:hover span {
-        color: #b91c1c !important;
-    }
-    /* ── Accept All / Reject All: wider size ── */
-    section[data-testid="stMain"] [data-testid="stHorizontalBlock"] button {
-        min-width: 120px !important;
-        padding: 6px 16px !important;
-        border-radius: 8px !important;
-        font-size: 13px !important;
-        font-weight: 600 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
+    st.markdown('<div class="section-label">Review & Corrections</div>', unsafe_allow_html=True)
     st.markdown(
-        "Claude audited each report for **missing fields**, **wrong/missing units**, "
-        "**date detection**, **out-of-range values**, and **missed tests**. "
-        "Every flag requires your approval before anything changes."
+        "In v6 Claude extracts data directly — no separate audit step is needed.  \n"
+        "Use **Patient Profiles → Full History → Manually Correct a Result** to fix "
+        "individual values.  \nThis page shows any reports you've manually flagged for review."
     )
 
-    st.markdown(f"""
-    <div style="display:flex;gap:1.25rem;flex-wrap:wrap;margin:0.75rem 0 1.25rem;
-         padding:0.75rem 1.25rem;background:{SURFACE};border:1px solid {BORDER};border-radius:12px;
-         font-size:0.75rem;color:{MUTED}">
-      <span>🆕 <b style="color:{TEXT}">MISSED</b> — in PDF but skipped by regex</span>
-      <span>⚠️ <b style="color:{TEXT}">CORRECTED</b> — value/unit differs</span>
-      <span>🔴 <b style="color:{CRIT}">CRITICAL</b> — danger zone</span>
-      <span>📊 <b style="color:{ORANGE}">HIGH</b> / <b style="color:{PURPLE}">LOW</b> — out of range</span>
-      <span>📋 <b style="color:{TEXT}">METADATA</b> — date/name/unit issue</span>
-      <span>❓ <b style="color:{TEXT}">LOW CONFIDENCE</b> — Claude unsure</span>
-    </div>""", unsafe_allow_html=True)
-
     pending = load_pending_reviews()
+
     if not pending:
-        st.success("✓ No pending reviews — all reports verified.")
+        st.success("✓ No pending reviews.")
     else:
         for review in pending:
             pid         = review["patient_id"]
-            report_date = review["report_date"]
-            diff_rows   = review.get("diff", [])
-            meta_corr   = review.get("meta_corrections", {})
+            report_date = review.get("report_date", "")
+            note        = review.get("note", "")
 
             history      = load_history(pid)
             patient_name = history["patient_name"].iloc[0] if not history.empty else pid
 
-            diff    = pd.DataFrame(diff_rows) if diff_rows else pd.DataFrame()
-            flagged = diff[diff["needs_review"] == True] if not diff.empty else pd.DataFrame()
+            with st.expander(f"📋  {patient_name}  ·  {report_date}", expanded=True):
+                if note:
+                    st.info(note)
 
-            meta_issues     = meta_corr.get("metadata_issues", [])
-            date_correction = meta_corr.get("date_correction")
-            name_correction = meta_corr.get("name_correction")
-            has_meta        = bool(meta_issues or date_correction or name_correction)
-            total_items     = (len(flagged) +
-                               (1 if date_correction else 0) +
-                               (1 if name_correction else 0) +
-                               len(meta_issues))
-
-            if total_items == 0 and flagged.empty:
-                delete_pending_review(pid, report_date)
-                continue
-
-            with st.expander(
-                f"📋  {patient_name}  ·  {report_date}  ·  {total_items} item(s)",
-                expanded=True,
-            ):
-                accepted_tests: list = []
-                rejected_tests: list = []
-                apply_date = reject_date = apply_name = reject_name = False
-
-                if has_meta:
-                    st.markdown('<div class="section-label">Metadata Issues</div>',
-                                unsafe_allow_html=True)
-                    for issue in meta_issues:
-                        st.warning(f"📋 {issue}")
-
-                    if date_correction:
-                        ci, ca, cr = st.columns([5, 1, 1])
-                        with ci:
-                            src = meta_corr.get("date_source", "report text")
-                            st.markdown("📋 **Date Correction**")
-                            st.caption(
-                                f"Claude read **{date_correction}** from '{src}'.  "
-                                f"Stored: **{report_date or '(empty)'}**"
-                            )
-                        with ca:
-                            if st.button("✓", key=f"acc_date_{pid}_{report_date}", type="primary"):
-                                apply_date = True
-                        with cr:
-                            if st.button("✗", key=f"rej_date_{pid}_{report_date}"):
-                                reject_date = True
-
-                    if name_correction:
-                        ci, ca, cr = st.columns([5, 1, 1])
-                        with ci:
-                            regex_name = history["patient_name"].iloc[0] if not history.empty else "?"
-                            st.markdown("📋 **Name Correction**")
-                            st.caption(f"Stored: **{regex_name}** → Claude: **{name_correction}**")
-                        with ca:
-                            if st.button("✓", key=f"acc_name_{pid}_{report_date}", type="primary"):
-                                apply_name = True
-                        with cr:
-                            if st.button("✗", key=f"rej_name_{pid}_{report_date}"):
-                                reject_name = True
-
-                if not flagged.empty:
-                    st.markdown(
-                        '<div class="section-label" style="margin-top:1.25rem">'
-                        'Value &amp; Range Checks</div>',
-                        unsafe_allow_html=True,
-                    )
-                    for _, row in flagged.iterrows():
-                        test   = row["test_name"]
-                        status = row["status"]
-                        conf   = row.get("confidence", "high")
-                        note   = row.get("note", "")
-                        r_val  = row["regex_value"]
-                        r_unit = clean_unit(row.get("regex_unit", ""))
-                        l_val  = row["llm_value"]
-                        l_unit = clean_unit(row.get("llm_unit", ""))
-                        rflag  = row.get("range_flag", "")
-                        rnote  = row.get("range_note", "")
-                        unote  = row.get("unit_note", "")
-
-                        if   status == "missed_by_regex":
-                            badge = "🆕 **MISSED**"
-                            desc  = f"Regex skipped this. Claude found: **{l_val} {l_unit}**"
-                        elif status == "corrected":
-                            badge = "⚠️ **CORRECTED**"
-                            desc  = f"Regex: **{r_val} {r_unit}** → Claude: **{l_val} {l_unit}**"
-                            if unote: desc += f"  _(unit: {unote})_"
-                        else:
-                            badge = "❓ **LOW CONFIDENCE**"
-                            desc  = f"Regex: **{r_val} {r_unit}** — Claude unsure"
-
-                        rflag_html  = ""
-                        rflag_color = TEXT
-                        if   rflag == "CRITICAL_HIGH": rflag_html, rflag_color = "🔴 CRITICAL HIGH", CRIT
-                        elif rflag == "CRITICAL_LOW":  rflag_html, rflag_color = "🔴 CRITICAL LOW",  CRIT
-                        elif rflag == "HIGH":           rflag_html, rflag_color = "📊 HIGH",           ORANGE
-                        elif rflag == "LOW":            rflag_html, rflag_color = "📊 LOW",            PURPLE
-
-                        ci, ca, cr = st.columns([5, 1, 1])
-                        with ci:
-                            hdr = badge
-                            if rflag_html:
-                                hdr += f' &nbsp;<span style="color:{rflag_color};font-size:0.8rem">{rflag_html}</span>'
-                            st.markdown(f"{hdr} &nbsp; **{test}**", unsafe_allow_html=True)
-                            parts = [desc]
-                            if rnote: parts.append(f"Range: _{rnote}_")
-                            if note:  parts.append(f"Note: _{note}_")
-                            if conf == "low": parts.append("⚠️ Low confidence")
-                            st.caption("  \n".join(parts))
-
-                        wk = f"review_{pid}_{report_date}_{test}"
-                        with ca:
-                            if st.button("✓", key=f"acc_{wk}", type="primary"):
-                                accepted_tests.append(test)
-                        with cr:
-                            if st.button("✗", key=f"rej_{wk}"):
-                                rejected_tests.append(test)
-
-                    st.markdown("---")
-                    ca2, cr2, _ = st.columns([1.5, 1.5, 5])
-                    with ca2:
-                        if st.button("✓ Accept All", key=f"acc_all_{pid}_{report_date}"):
-                            accepted_tests = flagged["test_name"].tolist()
-                    with cr2:
-                        if st.button("✗ Reject All", key=f"rej_all_{pid}_{report_date}"):
-                            rejected_tests = flagged["test_name"].tolist()
-
-                any_decision = (accepted_tests or rejected_tests or
-                                apply_date or reject_date or apply_name or reject_name)
-
-                if any_decision:
-                    cur_hist  = load_history(pid)
-                    report_df = cur_hist[
-                        cur_hist["report_date"].dt.strftime("%Y-%m-%d") == report_date
-                    ].copy()
-
-                    eff_meta: dict = {}
-                    if apply_date and date_correction:
-                        eff_meta["date_correction"] = date_correction
-                    if apply_name and name_correction:
-                        eff_meta["name_correction"] = name_correction
-
-                    if not report_df.empty and (accepted_tests or eff_meta):
-                        corrected = apply_corrections(report_df, diff, accepted_tests,
-                                                      meta_corrections=eff_meta or None)
-                        other = cur_hist[
-                            cur_hist["report_date"].dt.strftime("%Y-%m-%d") != report_date
-                        ]
-                        full = pd.concat([other, corrected], ignore_index=True)
-                        (STORE_DIR / f"{pid}.csv").write_text(full.to_csv(index=False))
-
-                        msgs = []
-                        if accepted_tests:                    msgs.append(f"{len(accepted_tests)} correction(s)")
-                        if eff_meta.get("date_correction"):   msgs.append(f"date → {eff_meta['date_correction']}")
-                        if eff_meta.get("name_correction"):   msgs.append(f"name → {eff_meta['name_correction']}")
-                        st.success(f"✓ Applied: {', '.join(msgs)}")
-
-                    if rejected_tests: st.info(f"Rejected {len(rejected_tests)} suggestion(s).")
-                    if reject_date:    st.info("Date correction rejected.")
-                    if reject_name:    st.info("Name correction rejected.")
-
-                    remaining = [t for t in flagged["test_name"]
-                                 if t not in accepted_tests and t not in rejected_tests]
-                    date_done = apply_date  or reject_date  or not date_correction
-                    name_done = apply_name  or reject_name  or not name_correction
-
-                    # Remove review entry as soon as ALL items are resolved,
-                    # then rerun so the expander disappears immediately.
-                    if not remaining and date_done and name_done:
+                col_dismiss, _ = st.columns([1, 4])
+                with col_dismiss:
+                    if st.button("✓ Dismiss", key=f"dismiss_{pid}_{report_date}", type="primary"):
                         delete_pending_review(pid, report_date)
                         st.rerun()
-                    elif any_decision:
-                        # Partial decision: rerun so the UI refreshes cleanly.
-                        # Next render will re-show only unresolved items.
-                        st.rerun()
-
 
 # ═══════════════════════════════════════════════
 # PAGE: ABOUT
